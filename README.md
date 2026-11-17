@@ -33,6 +33,16 @@ git clone https://github.com/foranewlife/dsh-apple-reminders.git
 dsh plugin --profile <profile> add link:$PWD/dsh-todo
 ```
 
+### 从旧名字升级（原来叫 `dsh-todo`）
+
+包名换成了 `dsh-apple-reminders`，profile 里旧的链接名对不上新包名，**直接重启会让插件加载不出来**。正确做法：
+
+1. 设置 → 插件 → 移除 `dsh-todo`
+2. 添加插件 → 选本地目录（或填新名字的 `github:` 地址）
+3. 重启应用
+
+清单不会丢：第一次加载会把旧的 `~/.dsh/dsh-todo/todos.json` 自动导入到 `~/.dsh/dsh-apple-reminders/todos.json`。
+
 首次同步会在提醒事项里创建 `DSH 待办` 列表，并在系统里弹一次「DeepSeek Harness 想要控制提醒事项」的授权。
 
 ## 每条任务能带什么
