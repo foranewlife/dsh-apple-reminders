@@ -1,0 +1,63 @@
+{
+  "name": "dsh-todo",
+  "version": "1.7.0",
+  "description": "A to-do list in the DeepSeek Harness right sidebar, two-way synced with Apple Reminders.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "todo",
+    "todo-list",
+    "reminders",
+    "macos",
+    "sidebar"
+  ],
+  "license": "MIT",
+  "author": "foranewlife",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/foranewlife/dsh-todo.git"
+  },
+  "homepage": "https://github.com/foranewlife/dsh-todo#readme",
+  "bugs": {
+    "url": "https://github.com/foranewlife/dsh-todo/issues"
+  },
+  "icon": "./icon.svg",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "test"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-shortcuts",
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.2-rc.3+": "compatible"
+      }
+    }
+  }
+}
