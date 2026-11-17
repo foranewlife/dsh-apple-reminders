@@ -1,6 +1,6 @@
 {
   "name": "dsh-apple-reminders",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "description": "A to-do list in the DeepSeek Harness right sidebar, two-way synced with Apple Reminders.",
   "keywords": [
     "dsh",

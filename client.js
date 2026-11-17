@@ -456,6 +456,8 @@ window.__ModuleLoader__.load({
       const itemList = (item) => (typeof item.list === 'string' && item.list !== ''
         ? item.list
         : (lists[0] ?? sync?.listName ?? ''))
+      /** @type {string[]} the lists to show, in the order they were chosen. */
+      const listOrder = lists.length > 0 ? lists : [sync?.listName ?? '']
 
       // Due date first (undated last), then the text, so the list reads like a plan.
       const byDue = (a, b) => {

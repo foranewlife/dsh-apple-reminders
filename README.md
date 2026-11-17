@@ -141,6 +141,7 @@ dsh plugin --profile <profile> add link:$PWD/dsh-todo
 
 ```sh
 node test/host-check.mjs                    # 两套计划、存储、工具、路由
+node test/render-check.mjs                  # 面板在各种状态下都能渲染（防止白屏）
 DSH_TODO_LIVE=1 node test/host-check.mjs    # 再加一轮真实提醒事项双向往返
 ```
 
