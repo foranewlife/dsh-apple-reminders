@@ -471,10 +471,12 @@ window.__ModuleLoader__.load({
         const name = itemList(item)
         if (!groupNames.includes(name)) groupNames.push(name)
       }
+      const configured = listOrder.filter((name) => name !== '')
       const orderedNames = [
-        ...lists.filter((name) => groupNames.includes(name)),
-        ...groupNames.filter((name) => !lists.includes(name)),
+        ...configured,
+        ...groupNames.filter((name) => !configured.includes(name)),
       ]
+      const grouped = orderedNames.length > 0
       const groups = orderedNames.map((name) => ({
         name,
         items: pendingSorted.filter((item) => itemList(item) === name),
@@ -707,15 +709,17 @@ window.__ModuleLoader__.load({
         // Where a new task goes, when there is more than one list to choose from.
         h('div', { className: 'dt-lists' },
           multiList ? h('span', { className: 'dt-sub' }, t('list.label')) : null,
-          lists.map((name) => h('button', {
-            key: name,
-            type: 'button',
-            className: activeList === name ? 'dt-chip dt-chip--on' : 'dt-chip',
-            'aria-pressed': activeList === name,
-            onClick: () => setTargetList(name),
-          },
-          h('span', { className: 'dt-dot', style: { background: colourOf(name) } }),
-          name)),
+          multiList
+            ? lists.map((name) => h('button', {
+              key: name,
+              type: 'button',
+              className: activeList === name ? 'dt-chip dt-chip--on' : 'dt-chip',
+              'aria-pressed': activeList === name,
+              onClick: () => setTargetList(name),
+            },
+            h('span', { className: 'dt-dot', style: { background: colourOf(name) } }),
+            name))
+            : null,
           h('button', {
             type: 'button',
             className: 'dt-chip',
@@ -783,7 +787,7 @@ window.__ModuleLoader__.load({
             : items.length === 0
               ? h('div', { className: 'dt-empty' }, t('empty'))
               : h('ul', { ref: listRef, className: 'dt-list' },
-                multiList ? groups.map(groupBlock) : pendingSorted.map(row),
+                grouped ? groups.map(groupBlock) : pendingSorted.map(row),
                 showDone && completed.length > 0
                   ? h('li', { key: 'completed', className: 'dt-section' },
                     h('span', null, t('completed', { count: completed.length })),
