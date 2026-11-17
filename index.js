@@ -14,7 +14,7 @@
  * @module dsh-apple-reminders
  */
 import {
-  createReminder, deleteReminder, ensureLists, listNames, moveReminder, readLists, remindersAvailable, updateReminder,
+  createReminder, deleteReminder, ensureLists, listColors, listNames, moveReminder, readLists, remindersAvailable, updateReminder,
 } from './lib/reminders.js'
 import { existsSync } from 'node:fs'
 
@@ -105,6 +105,8 @@ export function apply(ctx, config = {}) {
   let chain = Promise.resolve()
   /** Every Reminders list name, once somebody asked for it. */
   let availableLists = null
+  /** Colour per list name, so the panel can draw the same dots Reminders does. */
+  let colourByName = null
 
   /**
    * @param {object} item - stored task.
@@ -140,6 +142,7 @@ export function apply(ctx, config = {}) {
       status: mirrorStatus.status,
       listName: chosenLists()[0],
       lists: chosenLists(),
+      listColors: chosenLists().map((name) => colourByName?.[name] ?? ''),
     }
     if (Array.isArray(availableLists)) sync.available = availableLists
     if (mirrorStatus.lastSyncAt !== null) sync.lastSyncAt = mirrorStatus.lastSyncAt
@@ -408,6 +411,8 @@ export function apply(ctx, config = {}) {
       await flushTombstones()
       const names = readNames()
       const lists = await readLists(names, { detailed })
+      // Colours change rarely; only the detailed pass pays for them.
+      if (detailed) colourByName = await listColors().catch(() => colourByName)
       // An empty mirror is still worth creating: it is how the user sees that
       // the sync exists at all.
       const missing = lists.filter((list) => !list.exists).map((list) => list.name)
@@ -647,6 +652,7 @@ export function apply(ctx, config = {}) {
                 status: { type: 'string' },
                 listName: { type: 'string' },
                 lists: { type: 'array', items: { type: 'string' } },
+                listColors: { type: 'array', items: { type: 'string' } },
                 available: { type: 'array', items: { type: 'string' } },
                 lastSyncAt: { type: 'number' },
                 error: { type: 'string' },

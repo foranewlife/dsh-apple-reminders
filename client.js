@@ -240,7 +240,7 @@ window.__ModuleLoader__.load({
 .dt-input:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 1px; }
 .dt-lists { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 0 12px 6px; }
 .dt-manage { flex: none; display: flex; flex-direction: column; gap: 6px; margin: 0 12px 6px; padding: 8px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-sm); }
-.dt-chip { box-sizing: border-box; height: 20px; padding: 0 8px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 11px; line-height: 18px; cursor: pointer; }
+.dt-chip { display: inline-flex; align-items: center; gap: 5px; box-sizing: border-box; height: 22px; padding: 0 9px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 11px; line-height: 20px; cursor: pointer; }
 .dt-chip--on { border-color: var(--dsw-alias-state-business-primary); color: var(--dsw-alias-label-primary); }
 .dt-controls { flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px 6px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 16px; }
 .dt-controls-actions { display: inline-flex; flex: none; align-items: center; gap: 10px; margin-left: auto; }
@@ -253,13 +253,17 @@ window.__ModuleLoader__.load({
 .dt-button--error { color: var(--dsw-alias-state-error-primary); border-color: var(--dsw-alias-state-error-primary); }
 .dt-error { flex: none; padding: 0 12px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-state-error-primary); font-size: 12px; line-height: 16px; }
 .dt-list { flex: 1 1 auto; min-height: 0; margin: 0; padding: 0 6px 12px; list-style: none; overflow-y: auto; }
-.dt-row { padding: 4px 6px; border-radius: var(--dsw-radius-sm); }
+.dt-row { padding: 6px; border-radius: var(--dsw-radius-sm); }
 .dt-row-main { display: flex; align-items: flex-start; gap: 2px; }
-.dt-label { display: flex; flex: 1 1 auto; align-items: flex-start; gap: 8px; min-width: 0; cursor: pointer; }
-.dt-check { flex: none; width: 13px; height: 13px; margin: 4px 0 0; accent-color: var(--dsw-alias-state-business-primary); cursor: pointer; }
+.dt-label { display: flex; flex: 1 1 auto; align-items: flex-start; gap: 9px; min-width: 0; cursor: pointer; }
+.dt-check { flex: none; width: 14px; height: 14px; margin: 3px 0 0; accent-color: var(--dsw-alias-state-business-primary); cursor: pointer; }
 .dt-text-block { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .dt-text { min-width: 0; line-height: 20px; overflow-wrap: anywhere; }
 .dt-sub { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 15px; overflow-wrap: anywhere; }
+.dt-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 1px 0 1px; }
+.dt-pill { display: inline-flex; align-items: center; height: 17px; padding: 0 7px; border-radius: 999px; background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 17px; }
+.dt-pill--late { color: var(--dsw-alias-state-error-primary); }
+.dt-pill--quiet { padding: 0 2px; background: transparent; color: var(--dsw-alias-label-tertiary); }
 .dt-sub-overdue { color: var(--dsw-alias-state-error-primary); }
 .dt-flag { flex: none; width: 20px; height: 20px; margin-top: 1px; padding: 0; border: 0; border-radius: var(--dsw-radius-xs); background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 20px; cursor: pointer; opacity: 0.35; }
 .dt-flag--on { color: var(--dsw-alias-state-warn-primary); opacity: 1; }
@@ -273,7 +277,9 @@ window.__ModuleLoader__.load({
 .dt-section { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 6px 2px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 16px; }
 .dt-group { display: block; padding: 2px 0 0; }
 .dt-group-list { margin: 0; padding: 0; list-style: none; }
-.dt-group-head { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; padding: 4px 6px; border: 0; border-radius: var(--dsw-radius-xs); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; line-height: 16px; text-align: left; cursor: pointer; }
+.dt-group:not(:first-child) { margin-top: 4px; border-top: 0.5px solid var(--dsw-alias-border-l1); padding-top: 6px; }
+.dt-group-head { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; height: 30px; padding: 0 6px; border: 0; border-radius: var(--dsw-radius-sm); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; line-height: 16px; text-align: left; cursor: pointer; }
+.dt-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--dsw-alias-state-business-primary); }
 .dt-group-chevron { flex: none; width: 10px; color: var(--dsw-alias-label-tertiary); }
 .dt-group-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dt-group-count { flex: none; color: var(--dsw-alias-label-tertiary); }
@@ -430,6 +436,16 @@ window.__ModuleLoader__.load({
         nodes?.[nodes.length - 1]?.scrollIntoView({ block: 'nearest' })
       }, [scrollTick])
 
+      const colourByName = {}
+      if (Array.isArray(sync?.lists) && Array.isArray(sync?.listColors)) {
+        sync.lists.forEach((name, index) => {
+          const colour = sync.listColors[index]
+          if (typeof colour === 'string' && colour !== '') colourByName[name] = colour
+        })
+      }
+      /** @param {string} name - list name. @returns {string|undefined} the Apple colour. */
+      const colourOf = (name) => colourByName[name]
+
       const pending = items.filter((item) => !item.done)
       const completed = items.filter((item) => item.done)
       const lists = Array.isArray(sync?.lists) ? sync.lists : []
@@ -525,16 +541,23 @@ window.__ModuleLoader__.load({
 
       /** @param {object} item - one task. @returns {object|null} the compact detail line. */
       const detailLine = (item) => {
-        const bits = []
-        let overdue = false
+        const pills = []
         if (typeof item.due === 'string') {
-          overdue = !item.done && item.due < todayPrefix()
-          bits.push(`${overdue ? t('row.overdue') + ' ' : ''}${shortDate(item.due)}`)
+          const overdue = !item.done && item.due < todayPrefix()
+          pills.push(h('span', {
+            key: 'due',
+            className: overdue ? 'dt-pill dt-pill--late' : 'dt-pill',
+            title: overdue ? t('row.overdue') : undefined,
+          }, shortDate(item.due)))
         }
-        if (typeof item.priority === 'number') bits.push(t(`priority.${item.priority}`) ?? String(item.priority))
-        if (typeof item.notes === 'string') bits.push(t('row.notes'))
-        if (bits.length === 0) return null
-        return h('span', { className: overdue ? 'dt-sub dt-sub-overdue' : 'dt-sub' }, bits.join(' · '))
+        if (typeof item.priority === 'number') {
+          pills.push(h('span', { key: 'priority', className: 'dt-pill dt-pill--quiet' }, t(`priority.${item.priority}`) ?? String(item.priority)))
+        }
+        if (typeof item.notes === 'string') {
+          pills.push(h('span', { key: 'notes', className: 'dt-pill dt-pill--quiet' }, t('row.notes')))
+        }
+        if (pills.length === 0) return null
+        return h('span', { className: 'dt-pills' }, pills)
       }
 
       /** @param {object} item - the task whose settings are open. */
@@ -640,6 +663,7 @@ window.__ModuleLoader__.load({
             : t('group.collapse', { name: group.name }),
         },
         h('span', { className: 'dt-group-chevron' }, collapsed[group.name] === true ? '▸' : '▾'),
+        h('span', { className: 'dt-dot', style: { background: colourOf(group.name) } }),
         h('span', { className: 'dt-group-name' }, group.name),
         h('span', { className: 'dt-group-count' }, String(group.items.length))),
         collapsed[group.name] === true
@@ -689,7 +713,9 @@ window.__ModuleLoader__.load({
             className: activeList === name ? 'dt-chip dt-chip--on' : 'dt-chip',
             'aria-pressed': activeList === name,
             onClick: () => setTargetList(name),
-          }, name)),
+          },
+          h('span', { className: 'dt-dot', style: { background: colourOf(name) } }),
+          name)),
           h('button', {
             type: 'button',
             className: 'dt-chip',
