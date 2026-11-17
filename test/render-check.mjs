@@ -157,15 +157,16 @@ function render(state) {
 }
 
 const states = {
-  loaded: [items, sync, 'ready', false, '', '', '草稿', null, false, {}, false, null, '', 0, false],
-  'completed shown': [items, sync, 'ready', false, '', '', '', null, false, {}, true, null, '', 0, false],
-  'one list': [items, { ...sync, lists: ['DSH 待办'], listColors: ['#4C6C9E'] }, 'ready', false, '', '', '', null, false, {}, false, null, '', 0, false],
-  'empty list': [[], sync, 'ready', false, '', '', '', null, false, {}, false, null, '', 0, false],
-  'mirror off': [items, { enabled: false, status: 'off', listName: 'DSH 待办', lists: ['DSH 待办'] }, 'ready', false, '', '', '', null, false, {}, false, null, '', 0, false],
-  'sync failed': [items, { ...sync, status: 'error', error: 'boom' }, 'ready', false, '', '', '', null, false, {}, true, null, '', 0, false],
-  'operation failed': [items, sync, 'ready', false, '', 'nope', '', null, false, {}, false, null, '', 0, false],
-  loading: [[], null, 'loading', true, '', '', '', null, false, {}, false, null, '', 0, false],
-  failed: [[], null, 'failed', false, 'HTTP 404', '', '', null, false, {}, false, null, '', 0, false],
+  loaded: [items, sync, 'ready', false, '', '', '草稿', null, false, {}, 'all', null, '', 0, false],
+  'completed view': [items, sync, 'ready', false, '', '', '', null, false, {}, 'completed', null, '', 0, false],
+  'today view': [items, sync, 'ready', false, '', '', '', null, false, {}, 'today', null, '', 0, false],
+  'one list': [items, { ...sync, lists: ['DSH 待办'], listColors: ['#4C6C9E'] }, 'ready', false, '', '', '', null, false, {}, 'all', null, '', 0, false],
+  'empty list': [[], sync, 'ready', false, '', '', '', null, false, {}, 'all', null, '', 0, false],
+  'mirror off': [items, { enabled: false, status: 'off', listName: 'DSH 待办', lists: ['DSH 待办'] }, 'ready', false, '', '', '', null, false, {}, 'all', null, '', 0, false],
+  'sync failed': [items, { ...sync, status: 'error', error: 'boom' }, 'ready', false, '', '', '', null, false, {}, 'all', null, '', 0, false],
+  'operation failed': [items, sync, 'ready', false, '', 'nope', '', null, false, {}, 'all', null, '', 0, false],
+  loading: [[], null, 'loading', true, '', '', '', null, false, {}, 'all', null, '', 0, false],
+  failed: [[], null, 'failed', false, 'HTTP 404', '', '', null, false, {}, 'all', null, '', 0, false],
 }
 
 for (const [label, state] of Object.entries(states)) {
@@ -186,9 +187,15 @@ includes(loaded, '12-24', 'a due date is shown')
 includes(loaded, 'priority.5', 'a priority is shown')
 check(!loaded.includes('旧任务'), 'completed tasks stay hidden by default')
 
-const shown = textOf(render(states['completed shown']).tree)
-includes(shown, '旧任务', 'the completed section expands on request')
-includes(shown, 'completed', 'and names the section')
+const shown = textOf(render(states['completed view']).tree)
+includes(shown, '旧任务', 'the completed view lists finished tasks')
+includes(shown, 'view.completed', 'and titles itself Completed')
+
+const titles = textOf(render(states.loaded).tree)
+includes(titles, 'view.all', 'the title names the current view')
+includes(titles, 'view.today', 'the smart lists are shown')
+includes(titles, 'view.flagged', 'including the flag smart list')
+includes(titles, 'sync.now', 'the sync control is visible')
 
 const failed = textOf(render(states.failed).tree)
 includes(failed, 'load.failed', 'a read failure is reported')

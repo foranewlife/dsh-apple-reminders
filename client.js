@@ -1,12 +1,12 @@
 /**
  * Browser half of the to-do bundle: one right-sidebar tab type (`todo`) that
- * shows the Host-owned list, plus a guide entry and a global shortcut.
+ * shows the Host-owned list, laid out like Apple Reminders.
  *
- * The list lives on the Host (`$DSH_HOME/dsh-apple-reminders/todos.json`) so the model can
- * read and edit it and so Apple Reminders can mirror it. This module keeps no
- * copy of its own: it posts operations to `/api/dsh-apple-reminders/op` and follows
- * `/api/dsh-apple-reminders/events` for changes made anywhere else (another window, the
- * model, or the phone through Reminders).
+ * The list lives on the Host (`$DSH_HOME/dsh-apple-reminders/todos.json`) so the
+ * model can read and edit it and so Apple Reminders can mirror it. This module
+ * keeps no copy of its own: it posts operations to `/api/dsh-apple-reminders/op`
+ * and follows the events route for changes made anywhere else (another window,
+ * the model, or the phone through Reminders).
  */
 window.__ModuleLoader__.load({
   id: 'dsh-apple-reminders',
@@ -34,14 +34,27 @@ window.__ModuleLoader__.load({
     const REQUEST_TIMEOUT_MS = 10000
     /** Reminders priorities this panel offers. */
     const PRIORITIES = [0, 1, 5, 9]
+    /** The smart lists Reminders puts above the user's own lists. */
+    const TILES = [
+      { id: 'today', colour: '#0A84FF' },
+      { id: 'planned', colour: '#FF453A' },
+      { id: 'flagged', colour: '#FF9F0A' },
+      { id: 'completed', colour: '#8E8E93' },
+    ]
 
     const zh = {
       'type.label': '待办',
       'guide.title': '待办',
       'guide.description': '随手记下要做的事',
+      'view.today': '今天',
+      'view.planned': '计划',
+      'view.flagged': '旗标',
+      'view.all': '全部',
+      'view.completed': '已完成',
       'input.placeholder': '添加任务，回车确认',
       'input.label': '新任务',
-      'empty': '还没有任务',
+      'empty': '没有任务',
+      'empty.completed': '还没有已完成的任务',
       'loading': '读取中…',
       'load.failed': '读不到清单',
       'load.retry': '重试',
@@ -49,14 +62,14 @@ window.__ModuleLoader__.load({
       'remaining': '还剩 {count} 件',
       'allDone': '都完成了',
       'completed': '已完成 {count}',
-      'clear': '清除已完成',
+      'clear': '清除',
       'clear.confirm': '确认清除',
       'clear.aria': '清除已完成的任务',
       'clear.ariaArmed': '再点一次清除已完成的任务',
       'delete': '删除',
       'delete.aria': '删除：{text}',
-      'sync.now': '立即同步',
-      'sync.syncing': '同步中…',
+      'sync.now': '同步',
+      'sync.syncing': '同步中',
       'sync.retry': '重试',
       'sync.aria': '立即与提醒事项同步',
       'sync.error': '提醒事项同步失败：{reason}',
@@ -80,19 +93,25 @@ window.__ModuleLoader__.load({
       'priority.9': '高',
       'list.label': '新任务加到',
       'manage.title': '同步哪些列表',
-      'group.collapse': '折叠 {name}',
-      'group.expand': '展开 {name}',
       'manage.open': '管理列表',
       'manage.done': '完成',
+      'group.collapse': '折叠 {name}',
+      'group.expand': '展开 {name}',
     }
 
     const en = {
       'type.label': 'To-do',
       'guide.title': 'To-do',
       'guide.description': 'A quick list for yourself',
+      'view.today': 'Today',
+      'view.planned': 'Scheduled',
+      'view.flagged': 'Flagged',
+      'view.all': 'All',
+      'view.completed': 'Completed',
       'input.placeholder': 'Add a task, press Enter',
       'input.label': 'New task',
-      'empty': 'No tasks yet',
+      'empty': 'Nothing here',
+      'empty.completed': 'Nothing completed yet',
       'loading': 'Loading…',
       'load.failed': 'Cannot read the list',
       'load.retry': 'Retry',
@@ -100,14 +119,14 @@ window.__ModuleLoader__.load({
       'remaining': '{count} left',
       'allDone': 'All done',
       'completed': '{count} completed',
-      'clear': 'Clear completed',
+      'clear': 'Clear',
       'clear.confirm': 'Confirm',
       'clear.aria': 'Clear completed tasks',
       'clear.ariaArmed': 'Press again to clear completed tasks',
       'delete': 'Delete',
       'delete.aria': 'Delete: {text}',
-      'sync.now': 'Sync now',
-      'sync.syncing': 'Syncing…',
+      'sync.now': 'Sync',
+      'sync.syncing': 'Syncing',
       'sync.retry': 'Retry',
       'sync.aria': 'Sync with Reminders now',
       'sync.error': 'Reminders sync failed: {reason}',
@@ -131,10 +150,10 @@ window.__ModuleLoader__.load({
       'priority.9': 'High',
       'list.label': 'Add to',
       'manage.title': 'Lists to sync',
-      'group.collapse': 'Collapse {name}',
-      'group.expand': 'Expand {name}',
       'manage.open': 'Manage lists',
       'manage.done': 'Done',
+      'group.collapse': 'Collapse {name}',
+      'group.expand': 'Expand {name}',
     }
 
     /** A compact checklist glyph for the sidebar guide card; the guide owns its size. */
@@ -153,6 +172,18 @@ window.__ModuleLoader__.load({
         viewBox: '0 0 16 16', width: size, height: size, className: props.className,
         'aria-hidden': true, focusable: 'false',
       }, tick(2.6), rule(2.9), tick(9.4), rule(9.7))
+    }
+
+    /** A tick glyph for the round checkbox. */
+    function CheckGlyph() {
+      return h('svg', {
+        viewBox: '0 0 12 12', width: 11, height: 11,
+        'aria-hidden': true, focusable: 'false',
+      }, h('path', {
+        d: 'M2.4 6.4l2.3 2.3 4.9-5.4',
+        fill: 'none', stroke: 'currentColor', strokeWidth: 1.8,
+        strokeLinecap: 'round', strokeLinejoin: 'round',
+      }))
     }
 
     /**
@@ -232,77 +263,82 @@ window.__ModuleLoader__.load({
     }
 
     const CSS = `
-.dt-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; box-sizing: border-box; color: var(--dsw-alias-label-primary); font: inherit; font-size: var(--dsh-content-font-size-secondary, 13px); }
-.dt-form { flex: none; padding: 12px 12px 6px; }
-.dt-input { box-sizing: border-box; width: 100%; height: 32px; padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); color: inherit; font: inherit; }
+.dt-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; box-sizing: border-box; color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; }
+.dt-head { flex: none; display: flex; flex-direction: column; }
+.dt-title-row { display: flex; align-items: center; gap: 8px; padding: 12px 12px 8px; }
+.dt-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 22px; font-weight: 700; letter-spacing: -0.2px; line-height: 28px; color: var(--dsw-alias-state-business-primary); }
+.dt-sync { flex: none; box-sizing: border-box; height: 26px; padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; line-height: 24px; cursor: pointer; }
+.dt-sync--error { color: var(--dsw-alias-state-error-primary); border-color: var(--dsw-alias-state-error-primary); }
+.dt-sync:disabled { opacity: 0.55; cursor: default; }
+.dt-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 12px 10px; }
+.dt-tile { box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 46px; padding: 0 12px; border: 0; border-radius: 12px; color: #fff; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; opacity: 0.6; transition: opacity 120ms ease; }
+.dt-tile--on { opacity: 1; }
+.dt-tile-count { font-size: 16px; font-weight: 600; }
+.dt-form { flex: none; padding: 0 12px 8px; }
+.dt-input { box-sizing: border-box; width: 100%; height: 34px; padding: 0 12px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); color: inherit; font: inherit; }
 .dt-input::placeholder { color: var(--dsw-alias-label-tertiary); }
 .dt-input:focus { border-color: var(--dsw-alias-state-business-primary); }
 .dt-input:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 1px; }
-.dt-lists { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 0 12px 6px; }
-.dt-manage { flex: none; display: flex; flex-direction: column; gap: 6px; margin: 0 12px 6px; padding: 8px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-sm); }
+.dt-lists { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 12px 8px; }
 .dt-chip { display: inline-flex; align-items: center; gap: 5px; box-sizing: border-box; height: 22px; padding: 0 9px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 11px; line-height: 20px; cursor: pointer; }
 .dt-chip--on { border-color: var(--dsw-alias-state-business-primary); color: var(--dsw-alias-label-primary); }
-.dt-controls { flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px 6px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 16px; }
-.dt-controls-actions { display: inline-flex; flex: none; align-items: center; gap: 10px; margin-left: auto; }
-.dt-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-manage { flex: none; display: flex; flex-direction: column; gap: 6px; margin: 0 12px 8px; padding: 8px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: 10px; }
 .dt-link { padding: 0 4px; border: 0; border-radius: var(--dsw-radius-xs); background: transparent; color: var(--dsw-alias-label-tertiary); font: inherit; font-size: 12px; line-height: 16px; cursor: pointer; }
 .dt-link--armed { color: var(--dsw-alias-state-warn-primary); }
 .dt-link:disabled { opacity: 0.5; cursor: default; }
-.dt-button { box-sizing: border-box; height: 28px; padding: 0 12px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-sm); background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; cursor: pointer; }
-.dt-button--sm { height: 22px; padding: 0 8px; border-radius: var(--dsw-radius-xs); font-size: 12px; }
-.dt-button--error { color: var(--dsw-alias-state-error-primary); border-color: var(--dsw-alias-state-error-primary); }
-.dt-error { flex: none; padding: 0 12px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-state-error-primary); font-size: 12px; line-height: 16px; }
-.dt-list { flex: 1 1 auto; min-height: 0; margin: 0; padding: 0 6px 12px; list-style: none; overflow-y: auto; }
-.dt-row { padding: 6px; border-radius: var(--dsw-radius-sm); }
-.dt-row-main { display: flex; align-items: flex-start; gap: 2px; }
-.dt-label { display: flex; flex: 1 1 auto; align-items: flex-start; gap: 9px; min-width: 0; cursor: pointer; }
-.dt-check { flex: none; width: 14px; height: 14px; margin: 3px 0 0; accent-color: var(--dsw-alias-state-business-primary); cursor: pointer; }
-.dt-text-block { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.dt-text { min-width: 0; line-height: 20px; overflow-wrap: anywhere; }
 .dt-sub { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 15px; overflow-wrap: anywhere; }
-.dt-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 1px 0 1px; }
-.dt-pill { display: inline-flex; align-items: center; height: 17px; padding: 0 7px; border-radius: 999px; background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 17px; }
+.dt-error { flex: none; padding: 0 12px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-state-error-primary); font-size: 12px; line-height: 16px; }
+.dt-list { flex: 1 1 auto; min-height: 0; margin: 0; padding: 0 6px 16px; list-style: none; overflow-y: auto; }
+.dt-row { padding: 7px 6px; border-radius: 10px; }
+.dt-row-main { display: flex; align-items: flex-start; gap: 2px; }
+.dt-label { display: flex; flex: 1 1 auto; align-items: flex-start; gap: 10px; min-width: 0; cursor: pointer; }
+.dt-check { flex: none; box-sizing: border-box; display: grid; place-items: center; width: 18px; height: 18px; margin: 2px 0 0; padding: 0; border: 1.5px solid var(--dsw-alias-label-tertiary); border-radius: 50%; background: transparent; color: transparent; cursor: pointer; }
+.dt-check--done { border-color: var(--dsw-alias-state-business-primary); background: var(--dsw-alias-state-business-primary); color: var(--dsw-alias-bg-base); }
+.dt-text-block { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dt-text { min-width: 0; font-size: 14px; line-height: 21px; overflow-wrap: anywhere; }
+.dt-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 1px 0; }
+.dt-pill { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 6px; background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-state-business-primary); font-size: 11px; line-height: 18px; }
 .dt-pill--late { color: var(--dsw-alias-state-error-primary); }
-.dt-pill--quiet { padding: 0 2px; background: transparent; color: var(--dsw-alias-label-tertiary); }
-.dt-sub-overdue { color: var(--dsw-alias-state-error-primary); }
-.dt-flag { flex: none; width: 20px; height: 20px; margin-top: 1px; padding: 0; border: 0; border-radius: var(--dsw-radius-xs); background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 20px; cursor: pointer; opacity: 0.35; }
+.dt-pill--quiet { padding: 0; background: transparent; color: var(--dsw-alias-label-tertiary); }
+.dt-flag { flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 22px; cursor: pointer; opacity: 0.4; }
 .dt-flag--on { color: var(--dsw-alias-state-warn-primary); opacity: 1; }
-.dt-more { flex: none; width: 20px; height: 20px; margin-top: 1px; padding: 0; border: 0; border-radius: var(--dsw-radius-xs); background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 13px; line-height: 20px; cursor: pointer; opacity: 0.45; }
+.dt-more { flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 14px; line-height: 22px; cursor: pointer; opacity: 0.5; }
 .dt-more--on { opacity: 1; background: var(--dsw-alias-interactive-bg-hover); }
-.dt-del { flex: none; box-sizing: border-box; width: 20px; height: 20px; margin-top: 1px; padding: 0; border: 0; border-radius: var(--dsw-radius-xs); background: transparent; color: var(--dsw-alias-label-tertiary); font: inherit; font-size: 14px; line-height: 20px; cursor: pointer; opacity: 0; }
-.dt-editor { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px 27px; padding: 8px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-sm); }
+.dt-del { flex: none; box-sizing: border-box; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-tertiary); font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; opacity: 0; }
+.dt-editor { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px 28px; padding: 8px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: 10px; }
 .dt-editor-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.dt-date { box-sizing: border-box; height: 24px; padding: 0 6px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-bg-layer-1); color: inherit; font: inherit; font-size: 12px; }
-.dt-notes { box-sizing: border-box; width: 100%; min-height: 48px; padding: 5px 6px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-bg-layer-1); color: inherit; font: inherit; font-size: 12px; line-height: 18px; resize: vertical; }
-.dt-section { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 6px 2px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 16px; }
-.dt-group { display: block; padding: 2px 0 0; }
-.dt-group-list { margin: 0; padding: 0; list-style: none; }
-.dt-group:not(:first-child) { margin-top: 4px; border-top: 0.5px solid var(--dsw-alias-border-l1); padding-top: 6px; }
-.dt-group-head { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; height: 30px; padding: 0 6px; border: 0; border-radius: var(--dsw-radius-sm); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; line-height: 16px; text-align: left; cursor: pointer; }
+.dt-date { box-sizing: border-box; height: 24px; padding: 0 6px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 6px; background: var(--dsw-alias-bg-layer-1); color: inherit; font: inherit; font-size: 12px; }
+.dt-notes { box-sizing: border-box; width: 100%; min-height: 48px; padding: 5px 6px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 6px; background: var(--dsw-alias-bg-layer-1); color: inherit; font: inherit; font-size: 12px; line-height: 18px; resize: vertical; }
+.dt-group { display: block; padding: 0; }
+.dt-group:not(:first-child) { margin-top: 8px; }
+.dt-group-head { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; height: 30px; padding: 0 6px; border: 0; border-radius: 8px; background: transparent; color: var(--dsw-alias-label-tertiary); font: inherit; font-size: 12px; line-height: 16px; text-align: left; cursor: pointer; }
 .dt-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--dsw-alias-state-business-primary); }
-.dt-group-chevron { flex: none; width: 10px; color: var(--dsw-alias-label-tertiary); }
+.dt-group-chevron { flex: none; width: 10px; }
 .dt-group-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dt-group-count { flex: none; color: var(--dsw-alias-label-tertiary); }
+.dt-group-count { flex: none; }
+.dt-group-list { margin: 0; padding: 0; list-style: none; }
 .dt-row--done .dt-text { color: var(--dsw-alias-label-tertiary); text-decoration: line-through; }
-.dt-row--done .dt-check { opacity: 0.6; }
 .dt-empty { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 0 16px; color: var(--dsw-alias-label-tertiary); text-align: center; }
 .dt-detail { max-width: 100%; font-size: 12px; line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-button { box-sizing: border-box; height: 28px; padding: 0 12px; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: 8px; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; cursor: pointer; }
 @media (hover: hover) {
   .dt-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
   .dt-row:hover .dt-del { opacity: 1; }
   .dt-del:hover, .dt-flag:hover, .dt-more:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
-  .dt-link:hover { color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-interactive-bg-hover); }
-  .dt-button:hover, .dt-chip:hover { background: var(--dsw-alias-interactive-bg-hover); }
-  .dt-group-head:hover { background: var(--dsw-alias-interactive-bg-hover); }
+  .dt-link:hover, .dt-sync:hover { color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-interactive-bg-hover); }
+  .dt-chip:hover, .dt-group-head:hover { background: var(--dsw-alias-interactive-bg-hover); }
+  .dt-tile:hover { opacity: 1; }
 }
 @media (hover: none) { .dt-del { opacity: 1; } }
-.dt-del:active, .dt-link:active, .dt-button:active, .dt-chip:active { background: var(--dsw-alias-interactive-bg-active); }
-.dt-del:focus-visible, .dt-link:focus-visible, .dt-button:focus-visible, .dt-flag:focus-visible, .dt-more:focus-visible, .dt-chip:focus-visible, .dt-date:focus-visible, .dt-notes:focus-visible, .dt-group-head:focus-visible { opacity: 1; outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 1px; }
+.dt-del:active, .dt-link:active, .dt-chip:active { background: var(--dsw-alias-interactive-bg-active); }
+.dt-check:focus-visible, .dt-del:focus-visible, .dt-link:focus-visible, .dt-button:focus-visible, .dt-sync:focus-visible,
+.dt-tile:focus-visible, .dt-flag:focus-visible, .dt-more:focus-visible, .dt-chip:focus-visible, .dt-date:focus-visible,
+.dt-notes:focus-visible, .dt-group-head:focus-visible { opacity: 1; outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 1px; }
 `
 
     /**
-     * The tab body: an input line, the controls, the tasks with their settings,
-     * and the state of the Reminders mirror.
+     * The tab body: a title, the smart lists, the composer, and the tasks —
+     * laid out the way Apple Reminders lays out a list.
      * @param props - framework seat props, including the `todo` translate.
      */
     function TodoPanel(props) {
@@ -317,8 +353,8 @@ window.__ModuleLoader__.load({
       const [targetList, setTargetList] = React.useState(null)
       const [manageOpen, setManageOpen] = React.useState(false)
       const [collapsed, setCollapsed] = React.useState(readCollapsedGroups)
-      // Finished tasks stay out of the way until asked for.
-      const [showDone, setShowDone] = React.useState(false)
+      /** Which smart list is showing: all / today / planned / flagged / completed. */
+      const [view, setView] = React.useState('all')
       const [expanded, setExpanded] = React.useState(null)
       const [noteDraft, setNoteDraft] = React.useState('')
       const [scrollTick, setScrollTick] = React.useState(0)
@@ -446,8 +482,8 @@ window.__ModuleLoader__.load({
       /** @param {string} name - list name. @returns {string|undefined} the Apple colour. */
       const colourOf = (name) => colourByName[name]
 
-      const pending = items.filter((item) => !item.done)
-      const completed = items.filter((item) => item.done)
+      const open = items.filter((item) => !item.done)
+      const done = items.filter((item) => item.done)
       const lists = Array.isArray(sync?.lists) ? sync.lists : []
       const multiList = lists.length > 1
       const activeList = targetList ?? lists[0] ?? sync?.listName ?? ''
@@ -459,6 +495,23 @@ window.__ModuleLoader__.load({
       /** @type {string[]} the lists to show, in the order they were chosen. */
       const listOrder = lists.length > 0 ? lists : [sync?.listName ?? '']
 
+      const today = todayPrefix()
+      const withDue = open.filter((item) => typeof item.due === 'string')
+      const flagged = open.filter((item) => item.flagged === true)
+      const dueToday = open.filter((item) => typeof item.due === 'string' && item.due <= today)
+      const counts = {
+        today: dueToday.length,
+        planned: withDue.length,
+        flagged: flagged.length,
+        completed: done.length,
+        all: open.length,
+      }
+      const viewItems = view === 'today' ? dueToday
+        : view === 'planned' ? withDue
+          : view === 'flagged' ? flagged
+            : view === 'completed' ? done
+              : open
+
       // Due date first (undated last), then the text, so the list reads like a plan.
       const byDue = (a, b) => {
         const left = typeof a.due === 'string' ? a.due : '~~~~'
@@ -466,10 +519,9 @@ window.__ModuleLoader__.load({
         if (left !== right) return left < right ? -1 : 1
         return a.text.localeCompare(b.text)
       }
-      const pendingSorted = [...pending].sort(byDue)
-      const completedSorted = [...completed].sort(byDue)
+      const sorted = [...viewItems].sort(byDue)
       const groupNames = []
-      for (const item of pendingSorted) {
+      for (const item of sorted) {
         const name = itemList(item)
         if (!groupNames.includes(name)) groupNames.push(name)
       }
@@ -478,10 +530,10 @@ window.__ModuleLoader__.load({
         ...configured,
         ...groupNames.filter((name) => !configured.includes(name)),
       ]
-      const grouped = orderedNames.length > 0
+      const groupable = orderedNames.length > 0
       const groups = orderedNames.map((name) => ({
         name,
-        items: pendingSorted.filter((item) => itemList(item) === name),
+        items: sorted.filter((item) => itemList(item) === name),
       }))
 
       const run = async (op, { refocus = false } = {}) => {
@@ -543,11 +595,11 @@ window.__ModuleLoader__.load({
         patchTask(item.id, { notes: noteDraft })
       }
 
-      /** @param {object} item - one task. @returns {object|null} the compact detail line. */
+      /** @param {object} item - one task. @returns {object|null} the detail line under the title. */
       const detailLine = (item) => {
         const pills = []
         if (typeof item.due === 'string') {
-          const overdue = !item.done && item.due < todayPrefix()
+          const overdue = !item.done && item.due < today
           pills.push(h('span', {
             key: 'due',
             className: overdue ? 'dt-pill dt-pill--late' : 'dt-pill',
@@ -618,13 +670,14 @@ window.__ModuleLoader__.load({
       },
       h('div', { className: 'dt-row-main' },
         h('label', { className: 'dt-label' },
-          h('input', {
-            type: 'checkbox',
-            className: 'dt-check',
-            checked: item.done,
-            onChange: () => { void run({ op: 'toggle', id: item.id }) },
+          h('button', {
+            type: 'button',
+            className: item.done ? 'dt-check dt-check--done' : 'dt-check',
+            role: 'checkbox',
+            'aria-checked': item.done,
+            onClick: () => { void run({ op: 'toggle', id: item.id }) },
             'aria-label': item.done ? t('undo.aria', { text: item.text }) : t('done.aria', { text: item.text }),
-          }),
+          }, item.done ? h(CheckGlyph) : null),
           h('span', { className: 'dt-text-block' },
             h('span', { className: 'dt-text' }, item.text),
             detailLine(item))),
@@ -653,7 +706,8 @@ window.__ModuleLoader__.load({
       expanded === item.id ? editor(item) : null)
 
       /**
-       * One list's open tasks behind a foldable header.
+       * One list's tasks behind a foldable header, the way Reminders shows its
+       * own lists.
        * @param {{name: string, items: object[]}} group - the group.
        */
       const groupBlock = (group) => h('li', { key: `group:${group.name}`, className: 'dt-group' },
@@ -685,32 +739,62 @@ window.__ModuleLoader__.load({
         : syncFailed
           ? { text: t('sync.error', { reason: sync.error ?? '' }), title: sync.error ?? '' }
           : null
+      const emptyText = view === 'completed' ? t('empty.completed') : t('empty')
 
       return h('div', { className: 'dt-panel' },
         h('style', null, CSS),
-        h('div', { className: 'dt-form' },
-          h('form', {
-            onSubmit: (event) => {
-              event.preventDefault()
-              // An Enter that confirms a CJK candidate must not submit the draft.
-              if (event.nativeEvent.isComposing) return
-              add()
+        h('div', { className: 'dt-head' },
+          h('div', { className: 'dt-title-row' },
+            h('span', { className: 'dt-title' }, t(`view.${view}`)),
+            view === 'completed' && done.length > 0
+              ? h('button', {
+                type: 'button',
+                className: armed ? 'dt-link dt-link--armed' : 'dt-link',
+                onClick: clearCompleted,
+                'aria-label': armed ? t('clear.ariaArmed') : t('clear.aria'),
+              }, armed ? t('clear.confirm') : t('clear'))
+              : null,
+            sync === null || sync.enabled !== true ? null : h('button', {
+              type: 'button',
+              className: sync.status === 'error' ? 'dt-sync dt-sync--error' : 'dt-sync',
+              onClick: () => { void run({ op: 'sync' }) },
+              disabled: sync.status === 'syncing',
+              'aria-label': t('sync.aria'),
+              title: syncHint,
+            }, sync.status === 'syncing' ? t('sync.syncing') : sync.status === 'error' ? t('sync.retry') : t('sync.now'))),
+          h('div', { className: 'dt-tiles' },
+            TILES.map((tile) => h('button', {
+              key: tile.id,
+              type: 'button',
+              className: view === tile.id ? 'dt-tile dt-tile--on' : 'dt-tile',
+              style: { background: tile.colour },
+              'aria-pressed': view === tile.id,
+              onClick: () => setView(tile.id),
             },
-          },
-          h('input', {
-            ref: inputRef,
-            className: 'dt-input',
-            type: 'text',
-            value: draft,
-            onChange: (event) => setDraft(event.target.value),
-            placeholder: t('input.placeholder'),
-            'aria-label': t('input.label'),
-            autoComplete: 'off',
-            spellCheck: false,
-          }))),
+            h('span', null, t(`view.${tile.id}`)),
+            h('span', { className: 'dt-tile-count' }, String(counts[tile.id] ?? 0))))),
+          h('div', { className: 'dt-form' },
+            h('form', {
+              onSubmit: (event) => {
+                event.preventDefault()
+                // An Enter that confirms a CJK candidate must not submit the draft.
+                if (event.nativeEvent.isComposing) return
+                add()
+              },
+            },
+            h('input', {
+              ref: inputRef,
+              className: 'dt-input',
+              type: 'text',
+              value: draft,
+              onChange: (event) => setDraft(event.target.value),
+              placeholder: t('input.placeholder'),
+              'aria-label': t('input.label'),
+              autoComplete: 'off',
+              spellCheck: false,
+            })))),
         // Where a new task goes, when there is more than one list to choose from.
         h('div', { className: 'dt-lists' },
-          multiList ? h('span', { className: 'dt-sub' }, t('list.label')) : null,
           multiList
             ? lists.map((name) => h('button', {
               key: name,
@@ -735,7 +819,7 @@ window.__ModuleLoader__.load({
         manageOpen
           ? h('div', { className: 'dt-manage' },
             h('div', { className: 'dt-sub' }, t('manage.title')),
-            h('div', { className: 'dt-lists' }, (Array.isArray(sync?.available) ? sync.available : lists).map((name) => h('button', {
+            h('div', { className: 'dt-lists', style: { padding: 0 } }, (Array.isArray(sync?.available) ? sync.available : lists).map((name) => h('button', {
               key: name,
               type: 'button',
               className: lists.includes(name) ? 'dt-chip dt-chip--on' : 'dt-chip',
@@ -748,28 +832,6 @@ window.__ModuleLoader__.load({
             }, name))),
             h('button', { type: 'button', className: 'dt-link', onClick: () => setManageOpen(false) }, t('manage.done')))
           : null,
-        // Everything the user can act on sits above the list.
-        phase !== 'ready' ? null : h('div', { className: 'dt-controls' },
-          items.length === 0
-            ? null
-            : h('span', { className: 'dt-count', 'aria-live': 'polite' }, pending.length === 0 ? t('allDone') : t('remaining', { count: pending.length })),
-          h('span', { className: 'dt-controls-actions' },
-            sync === null || sync.enabled !== true ? null : h('button', {
-              type: 'button',
-              className: sync.status === 'error' ? 'dt-button dt-button--sm dt-button--error' : 'dt-button dt-button--sm',
-              onClick: () => { void run({ op: 'sync' }) },
-              disabled: sync.status === 'syncing',
-              'aria-label': t('sync.aria'),
-              title: syncHint,
-            }, sync.status === 'syncing' ? t('sync.syncing') : sync.status === 'error' ? t('sync.retry') : t('sync.now')),
-            completed.length === 0
-              ? null
-              : h('button', {
-                type: 'button',
-                className: 'dt-link',
-                onClick: () => setShowDone(!showDone),
-                'aria-expanded': showDone,
-              }, `${t('completed', { count: completed.length })} ${showDone ? '▾' : '▸'}`))),
         phase !== 'ready' || status === null ? null : h('div', {
           className: 'dt-error',
           role: 'status',
@@ -786,21 +848,12 @@ window.__ModuleLoader__.load({
                 className: 'dt-button',
                 onClick: () => { setPhase('loading'); setSlow(false); setLoadError(''); void load() },
               }, t('load.retry')))
-            : items.length === 0
-              ? h('div', { className: 'dt-empty' }, t('empty'))
+            : sorted.length === 0
+              ? h('div', { className: 'dt-empty' }, emptyText)
               : h('ul', { ref: listRef, className: 'dt-list' },
-                grouped ? groups.map(groupBlock) : pendingSorted.map(row),
-                showDone && completed.length > 0
-                  ? h('li', { key: 'completed', className: 'dt-section' },
-                    h('span', null, t('completed', { count: completed.length })),
-                    h('button', {
-                      type: 'button',
-                      className: armed ? 'dt-link dt-link--armed' : 'dt-link',
-                      onClick: clearCompleted,
-                      'aria-label': armed ? t('clear.ariaArmed') : t('clear.aria'),
-                    }, armed ? t('clear.confirm') : t('clear')))
-                  : null,
-                showDone ? completedSorted.map(row) : null))
+                groupable
+                  ? groups.filter((group) => group.items.length > 0 || view === 'all').map(groupBlock)
+                  : sorted.map(row)))
     }
 
     return {
