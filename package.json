@@ -1,5 +1,5 @@
 {
-  "name": "dsh-todo",
+  "name": "dsh-apple-reminders",
   "version": "1.7.0",
   "description": "A to-do list in the DeepSeek Harness right sidebar, two-way synced with Apple Reminders.",
   "keywords": [
@@ -16,11 +16,11 @@
   "author": "foranewlife",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/foranewlife/dsh-todo.git"
+    "url": "git+https://github.com/foranewlife/dsh-apple-reminders.git"
   },
-  "homepage": "https://github.com/foranewlife/dsh-todo#readme",
+  "homepage": "https://github.com/foranewlife/dsh-apple-reminders#readme",
   "bugs": {
-    "url": "https://github.com/foranewlife/dsh-todo/issues"
+    "url": "https://github.com/foranewlife/dsh-apple-reminders/issues"
   },
   "icon": "./icon.svg",
   "type": "module",

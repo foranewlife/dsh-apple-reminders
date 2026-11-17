@@ -2,14 +2,14 @@
  * Browser half of the to-do bundle: one right-sidebar tab type (`todo`) that
  * shows the Host-owned list, plus a guide entry and a global shortcut.
  *
- * The list lives on the Host (`$DSH_HOME/dsh-todo/todos.json`) so the model can
+ * The list lives on the Host (`$DSH_HOME/dsh-apple-reminders/todos.json`) so the model can
  * read and edit it and so Apple Reminders can mirror it. This module keeps no
- * copy of its own: it posts operations to `/api/dsh-todo/op` and follows
- * `/api/dsh-todo/events` for changes made anywhere else (another window, the
+ * copy of its own: it posts operations to `/api/dsh-apple-reminders/op` and follows
+ * `/api/dsh-apple-reminders/events` for changes made anywhere else (another window, the
  * model, or the phone through Reminders).
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-todo',
+  id: 'dsh-apple-reminders',
   factory(require) {
     const React = require('react')
     const h = React.createElement
@@ -19,12 +19,12 @@ window.__ModuleLoader__.load({
     /** The tab kind this plugin owns. */
     const KIND = 'todo'
     /** This implementation's identity in the tab system, and its slot key. */
-    const ID = 'dsh-todo'
+    const ID = 'dsh-apple-reminders'
     /** The shortcut command that opens this tab. */
     const COMMAND = 'todo.open'
     /** Relative paths resolve against the document, as the host's own routes do. */
-    const OP_URL = 'api/dsh-todo/op'
-    const EVENTS_URL = 'api/dsh-todo/events'
+    const OP_URL = 'api/dsh-apple-reminders/op'
+    const EVENTS_URL = 'api/dsh-apple-reminders/events'
     /** The abandoned browser-local list from the first version of this plugin. */
     const LEGACY_KEY = 'dsh.todo.v1'
     /** Which list groups the user folded away; a view preference, so it stays local. */
@@ -774,7 +774,7 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight'],
       apply(ctx) {
-        ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-todo: dictionaries')
+        ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-apple-reminders: dictionaries')
         const t = ctx.locale.bind(NS)
 
         ctx.effect(() => ctx.sidebarRightTabs.register({
@@ -789,7 +789,7 @@ window.__ModuleLoader__.load({
             description: () => t('guide.description'),
             icon: GuideIcon,
           }],
-        }), 'dsh-todo: tab type')
+        }), 'dsh-apple-reminders: tab type')
 
         ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
           name: 'sidebar.right.pane.tab',
@@ -818,7 +818,7 @@ window.__ModuleLoader__.load({
               if (target === undefined) return { status: 'blocked', reason: t('shortcut.noSession') }
               return { status: 'handled', run: () => { ctx.sidebarRight.openTabFromTarget(KIND, target) } }
             },
-          }), 'dsh-todo: shortcut')
+          }), 'dsh-apple-reminders: shortcut')
         })
 
         // Unloading the plugin must not leave tabs that no type can draw.
@@ -839,7 +839,7 @@ window.__ModuleLoader__.load({
           } catch {
             // Best effort: the sidebar may already be disposed with the page.
           }
-        }, 'dsh-todo: open tabs')
+        }, 'dsh-apple-reminders: open tabs')
       },
     }
   },

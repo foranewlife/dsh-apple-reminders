@@ -73,9 +73,9 @@ function fakeContext() {
 
 /** @param {{routes: Map<string, object>}} world @param {object} body */
 async function post(world, body) {
-  const route = world.routes.get('/api/dsh-todo/op')
+  const route = world.routes.get('/api/dsh-apple-reminders/op')
   if (route === undefined) throw new Error('op route not registered')
-  const response = await route.fetch(new Request('http://127.0.0.1/api/dsh-todo/op', {
+  const response = await route.fetch(new Request('http://127.0.0.1/api/dsh-apple-reminders/op', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -85,9 +85,9 @@ async function post(world, body) {
 
 /** Read the first SSE frame the event route emits. */
 async function firstFrame(world) {
-  const route = world.routes.get('/api/dsh-todo/events')
+  const route = world.routes.get('/api/dsh-apple-reminders/events')
   if (route === undefined) throw new Error('event route not registered')
-  const response = await route.fetch(new Request('http://127.0.0.1/api/dsh-todo/events', { method: 'GET' }))
+  const response = await route.fetch(new Request('http://127.0.0.1/api/dsh-apple-reminders/events', { method: 'GET' }))
   const reader = response.body.getReader()
   const { value } = await reader.read()
   await reader.cancel()
@@ -253,8 +253,8 @@ async function pluginChecks(dir) {
   await new Promise((resolve) => setTimeout(resolve, 20))
 
   check(world.tools.has('personal_todos'), 'model tool is registered')
-  check(world.routes.has('/api/dsh-todo/op'), 'panel command route is registered')
-  check(world.routes.has('/api/dsh-todo/events'), 'event stream route is registered')
+  check(world.routes.has('/api/dsh-apple-reminders/op'), 'panel command route is registered')
+  check(world.routes.has('/api/dsh-apple-reminders/events'), 'event stream route is registered')
 
   const added = await post(world, { op: 'add', text: '写周报' })
   check(added.status === 200 && added.payload.ok === true, 'add succeeds')

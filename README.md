@@ -1,4 +1,4 @@
-# dsh-todo — 右侧边栏的待办清单（与「提醒事项」双向同步）
+# dsh-apple-reminders — 右侧边栏的待办清单，与苹果「提醒事项」双向同步
 
 一份待办清单，三个入口，两边都能改：
 
@@ -6,7 +6,7 @@
 - **AI 模型**：工具 `personal_todos`，能读、能加、能勾、能删。
 - **手机/iPad**：苹果「提醒事项」里名为「DSH 待办」的列表。
 
-清单存在本机 `~/.dsh/dsh-todo/todos.json`，是持久副本；「提醒事项」和它双向同步，任何一边改都会到另一边。镜像里放的是**未完成任务 + 30 天内完成的任务**——所以「添加后马上勾掉」也能在提醒事项里看到（显示为已完成）。
+清单存在本机 `~/.dsh/dsh-apple-reminders/todos.json`，是持久副本；「提醒事项」和它双向同步，任何一边改都会到另一边。镜像里放的是**未完成任务 + 30 天内完成的任务**——所以「添加后马上勾掉」也能在提醒事项里看到（显示为已完成）。
 
 ## 安装
 
@@ -15,13 +15,13 @@
 **方式一：插件管理器（推荐）**
 
 1. DSH → 设置 → 插件 → 添加插件
-2. 选这个仓库的本地目录，或填入 `github:foranewlife/dsh-todo`
+2. 选这个仓库的本地目录，或填入 `github:foranewlife/dsh-apple-reminders`
 3. 启用后**重启一次应用**（Host 侧代码不会热更新），再刷新页面
 
 **方式二：命令行**
 
 ```sh
-dsh plugin --profile <profile> add github:foranewlife/dsh-todo
+dsh plugin --profile <profile> add github:foranewlife/dsh-apple-reminders
 ```
 
 然后把 `dsh-todo` 加进该 profile `package.json` 里 `dsh.profile.bundles` 数组，重启应用。
@@ -29,7 +29,7 @@ dsh plugin --profile <profile> add github:foranewlife/dsh-todo
 **方式三：本地开发**
 
 ```sh
-git clone https://github.com/foranewlife/dsh-todo.git
+git clone https://github.com/foranewlife/dsh-apple-reminders.git
 dsh plugin --profile <profile> add link:$PWD/dsh-todo
 ```
 
@@ -103,7 +103,7 @@ dsh plugin --profile <profile> add link:$PWD/dsh-todo
 
 ## 数据与配置
 
-- 清单：`~/.dsh/dsh-todo/todos.json`（遵循 `DSH_HOME`）。原子替换写入、权限 600；文件损坏会改名留档而不是覆盖。
+- 清单：`~/.dsh/dsh-apple-reminders/todos.json`（遵循 `DSH_HOME`）。原子替换写入、权限 600；文件损坏会改名留档而不是覆盖。
 - 默认只同步一个列表 `DSH 待办`。面板里点输入框下方那个 `+` 就能勾选要同步的提醒事项列表——选择存在数据文件的 `settings.lists` 里，立即生效、不用改配置也不用重启。也可以在 profile 的 `cordis.patch.yml` 里给初始值：
 
 ```yaml
@@ -147,13 +147,15 @@ DSH_TODO_LIVE=1 node test/host-check.mjs    # 再加一轮真实提醒事项双�
 
 ## English
 
-A to-do list plugin for the DeepSeek Harness web client. It lives in the right sidebar, is shared by every conversation, is readable and writable by the model through the `personal_todos` tool, and is kept in **two-way sync with Apple Reminders** on macOS.
+A to-do list plugin for the DeepSeek Harness web client, two-way synced with **Apple Reminders** (macOS). It lives in the right sidebar, is shared by every conversation, is readable and writable by the model through the `personal_todos` tool, and is kept in **two-way sync with Apple Reminders** on macOS.
 
 - Open it from the right sidebar guide page or press `Cmd/Ctrl + Alt + T`.
 - Each task can carry a due date, a flag, a priority and notes, all shared with the matching Reminders fields.
 - Several Reminders lists can be synced at once; tasks group by list behind foldable headers and sort by due date.
 - Edits on either side reach the other; a field edited differently on both sides resolves in DSH favour. Deleting a whole Reminders list rebuilds it instead of deleting tasks.
 
-Install: DSH → Settings → Plugins → Add plugin (`github:foranewlife/dsh-todo`), then restart the app once. Reminders sync is macOS-only; everything else works everywhere.
+Install: DSH → Settings → Plugins → Add plugin (`github:foranewlife/dsh-apple-reminders`), then restart the app once. Reminders sync is macOS-only; everything else works everywhere.
 
 MIT licensed.
+
+> Not affiliated with Apple Inc. *Reminders* and *Apple* are trademarks of Apple Inc., used here only to describe what the plugin integrates with.

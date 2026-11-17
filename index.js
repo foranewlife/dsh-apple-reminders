@@ -1,7 +1,7 @@
 /**
  * Host half of the to-do bundle.
  *
- * It owns the list document (`$DSH_HOME/dsh-todo/todos.json`), keeps one or
+ * It owns the list document (`$DSH_HOME/dsh-apple-reminders/todos.json`), keeps one or
  * more Apple Reminders lists in two-way sync with it, exposes the list to the
  * model as one tool, and serves the right-sidebar panel over two exact Fetch
  * routes on the shared `/api` channel.
@@ -11,12 +11,14 @@
  * told apart. A field changed on one side wins there; a field changed on both
  * resolves in DSH's favour.
  *
- * @module dsh-todo
+ * @module dsh-apple-reminders
  */
 import {
   createReminder, deleteReminder, ensureLists, listNames, moveReminder, readLists, remindersAvailable, updateReminder,
 } from './lib/reminders.js'
-import { defaultFilePath, newId, pruneTombstones, TodoStore } from './lib/store.js'
+import { existsSync } from 'node:fs'
+
+import { defaultFilePath, legacyFilePath, loadState, newId, pruneTombstones, TodoStore } from './lib/store.js'
 import { CHEAP_FIELDS, FIELDS, fromItem, planMerge, planPush, toMirror } from './lib/sync.js'
 
 /** The model-facing tool name; `todo_write` and `run_code` belong to the product. */
@@ -74,8 +76,24 @@ export function apply(ctx, config = {}) {
   }
   const log = ctx.logger ?? console
   const store = new TodoStore(settings.file)
-  const ready = store.load()
-  ready.catch((error) => { log.error?.(`dsh-todo: cannot read ${settings.file}: ${messageOf(error)}`) })
+  /**
+   * Load the list, importing the file the plugin used before it was renamed.
+   * @returns {Promise<object>} the loaded state.
+   */
+  const ready = (async () => {
+    const state = await store.load()
+    // Only the default location is ever migrated; an explicitly configured file is left alone.
+    if (settings.file !== defaultFilePath() || state.items.length > 0 || existsSync(settings.file)) return state
+    const legacy = await loadState(legacyFilePath()).catch(() => null)
+    if (legacy === null || legacy.items.length === 0) return state
+    log.info?.(`dsh-apple-reminders: importing the list from ${legacyFilePath()}`)
+    return store.commit((draft) => {
+      draft.items = legacy.items
+      draft.tombstones = legacy.tombstones
+      draft.settings = legacy.settings
+    })
+  })()
+  ready.catch((error) => { log.error?.(`dsh-apple-reminders: cannot read ${settings.file}: ${messageOf(error)}`) })
 
   /** SSE writers of every open panel. */
   const panels = new Set()
@@ -374,7 +392,7 @@ export function apply(ctx, config = {}) {
       setStatus('idle')
     } catch (error) {
       setStatus('error', messageOf(error))
-      log.warn?.(`dsh-todo: Apple Reminders push failed: ${messageOf(error)}`)
+      log.warn?.(`dsh-apple-reminders: Apple Reminders push failed: ${messageOf(error)}`)
     }
   }
 
@@ -402,7 +420,7 @@ export function apply(ctx, config = {}) {
       setStatus('idle', null, detailed)
     } catch (error) {
       setStatus('error', messageOf(error))
-      log.warn?.(`dsh-todo: Apple Reminders merge failed: ${messageOf(error)}`)
+      log.warn?.(`dsh-apple-reminders: Apple Reminders merge failed: ${messageOf(error)}`)
     }
   }
 
@@ -645,7 +663,7 @@ export function apply(ctx, config = {}) {
         },
       },
       execute: async (args) => applyOp(args ?? { op: 'list' }),
-    }), 'dsh-todo: tool')
+    }), 'dsh-apple-reminders: tool')
   })
 
   /**
@@ -695,7 +713,7 @@ export function apply(ctx, config = {}) {
   // shared authenticated `/api` channel.
   ctx.inject(['connection'], (webCtx) => {
     webCtx.effect(() => webCtx.connection.fetch.register({
-      path: '/api/dsh-todo/op',
+      path: '/api/dsh-apple-reminders/op',
       methods: ['POST'],
       requestBody: 'buffered',
       fetch: async (request) => {
@@ -715,14 +733,14 @@ export function apply(ctx, config = {}) {
           })
         }
       },
-    }), 'dsh-todo: op route')
+    }), 'dsh-apple-reminders: op route')
 
     webCtx.effect(() => webCtx.connection.fetch.register({
-      path: '/api/dsh-todo/events',
+      path: '/api/dsh-apple-reminders/events',
       methods: ['GET'],
       requestBody: 'buffered',
       fetch: (request) => Promise.resolve(openStream(request)),
-    }), 'dsh-todo: event stream')
+    }), 'dsh-apple-reminders: event stream')
   })
 
   // Background merge only while somebody is looking at the panel. Cheap fields
@@ -741,7 +759,7 @@ export function apply(ctx, config = {}) {
     if (debounce !== null) clearTimeout(debounce)
     if (interval !== null) clearInterval(interval)
     panels.clear()
-  }, 'dsh-todo: timers')
+  }, 'dsh-apple-reminders: timers')
 }
 
 /**

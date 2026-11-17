@@ -1,5 +1,5 @@
 # Bundle patch: one row loads this package's Host half (a no-op Cordis plugin)
 # and, through `dsh.client`, its browser half into the Web Client.
 - insert:
-    - id: dsh-todo
-      name: dsh-todo
+    - id: dsh-apple-reminders
+      name: dsh-apple-reminders
