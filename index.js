@@ -64,7 +64,7 @@ const FRESH_MERGE_MS = 60000
 const MAX_CREATES_PER_PASS = 20
 /** Cross-process sync lock polling step, max wait, and stale-lock horizon. */
 const SYNC_LOCK_POLL_MS = 150
-const SYNC_LOCK_WAIT_MS = 15000
+const SYNC_LOCK_WAIT_MS = 90000
 const SYNC_LOCK_STALE_MS = 90000
 /** Fields the panel or tool may set on one task. */
 const PATCHABLE = [
