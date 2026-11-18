@@ -10,6 +10,10 @@
 
 ## 安装
 
+本仓库同时支持 **DeepSeek Harness (DSH)** 与 **Google Antigravity（反重力）** 开箱即用（零构建、零 `npm install`），两者共用同一份本地数据 `~/.dsh/dsh-apple-reminders/todos.json` 与 macOS 提醒事项双向同步。
+
+### DeepSeek Harness (DSH)
+
 要求：macOS（提醒事项同步只在 macOS 上可用；其他平台插件仍能当本地待办用）、DeepSeek Harness `0.2.2-rc.3` 及以上、桌面版 Web GUI。
 
 **方式一：插件管理器（推荐）**
@@ -31,6 +35,34 @@ dsh plugin --profile <profile> add github:foranewlife/dsh-apple-reminders
 ```sh
 git clone https://github.com/foranewlife/dsh-apple-reminders.git
 dsh plugin --profile <profile> add link:$PWD/dsh-apple-reminders
+```
+
+### Google Antigravity（反重力）
+
+安装后开箱即得：
+- 右侧辅助栏（Right Auxiliary Pane）**`Reminders`** 面板（与 DSH 同一套交互界面与主题自适应）
+- **`personal_todos`** MCP 工具（供 Agent 读写待办与触发同步）
+- **`/apple-reminders`** Skill（任务字段规范与侧边栏唤醒链接）
+- 与 DSH 共用 `~/.dsh/dsh-apple-reminders/todos.json` 及 macOS 提醒事项双向同步
+
+**方式一：Antigravity GUI（推荐）**
+
+打开 `Customizations → Plugins → Install from URL`，填入：
+
+```text
+https://github.com/foranewlife/dsh-apple-reminders
+```
+
+**方式二：Antigravity CLI 或 Git 克隆**
+
+```sh
+agy plugin install https://github.com/foranewlife/dsh-apple-reminders
+```
+
+或直接克隆到插件目录：
+
+```sh
+git clone https://github.com/foranewlife/dsh-apple-reminders.git ~/.gemini/config/plugins/dsh-apple-reminders
 ```
 
 ### 从旧名字升级（原来叫 `dsh-todo`）
@@ -205,7 +237,17 @@ An Apple Reminders-style to-do list plugin for the DeepSeek Harness web client, 
 - **`personal_todos` AI tool**: Supports `list`, `add`, `toggle`, `update`, `remove`, `restore`, `destroy`, `empty_trash`, `clear_done`, `create_list`, `update_list`, `delete_list`, and `sync` across all task, subtask, list/section, and trash fields.
 - **Two-way Apple Reminders sync (macOS)**: Syncs multiple lists and list moves, distinguishes all-day vs timed due dates (`alldayDueDate` vs `dueDate` + `remindMeDate`), extracts inline `#tags` on phone imports, keeps local-only rich fields out of Reminders `body`, resolves conflicts in DSH favour, rebuilds deleted Reminders lists, and prunes tasks completed over 30 days ago from Reminders while keeping DSH history.
 
-Install: DSH → Settings → Plugins → Add plugin (`github:foranewlife/dsh-apple-reminders`), then restart the app once. Reminders sync is macOS-only; everything else works everywhere.
+### Install
+
+Works out of the box (zero `npm install`) in both **DeepSeek Harness (DSH)** and **Google Antigravity**:
+
+- **DeepSeek Harness (DSH)**: DSH → Settings → Plugins → Add plugin (`github:foranewlife/dsh-apple-reminders`), then restart the app once.
+- **Google Antigravity**:
+  - **GUI**: `Customizations → Plugins → Install from URL` → `https://github.com/foranewlife/dsh-apple-reminders`
+  - **CLI / Git**: `agy plugin install https://github.com/foranewlife/dsh-apple-reminders` or `git clone https://github.com/foranewlife/dsh-apple-reminders.git ~/.gemini/config/plugins/dsh-apple-reminders`
+  - Out of the box in Antigravity: Right Auxiliary Pane **`Reminders`** UI, **`personal_todos`** MCP tool, **`/apple-reminders`** skill, and shared `~/.dsh/dsh-apple-reminders/todos.json` + macOS Apple Reminders two-way sync with DSH.
+
+Reminders sync is macOS-only; everything else works everywhere.
 
 MIT licensed.
 

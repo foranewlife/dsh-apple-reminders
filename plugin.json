@@ -1,0 +1,18 @@
+{
+  "name": "apple-reminders",
+  "displayName": "Apple Reminders",
+  "description": "Apple Reminders side-pane UI, two-way macOS Reminders sync, and personal_todos MCP tool (works in Antigravity and DeepSeek Harness).",
+  "version": "2.2.0",
+  "author": "foranewlife",
+  "homepage": "https://github.com/foranewlife/dsh-apple-reminders#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/foranewlife/dsh-apple-reminders"
+  },
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "查看我今天的待办和提醒事项",
+    "帮我在提醒事项里加一条今天下午 3 点的任务",
+    "立即与苹果提醒事项同步并汇总未完成项"
+  ]
+}

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" fill="none">
+  <defs>
+    <linearGradient id="cardGrad" x1="14" y1="14" x2="114" y2="114" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#F2F4F8" />
+    </linearGradient>
+    <filter id="cardShadow" x="8" y="10" width="112" height="114" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#0F172A" flood-opacity="0.18" />
+    </filter>
+  </defs>
+
+  <!-- Rounded card (~10% margin on 128x128 canvas) -->
+  <g filter="url(#cardShadow)">
+    <rect x="14" y="14" width="100" height="100" rx="24" fill="url(#cardGrad)" stroke="#CBD5E1" stroke-width="2" />
+  </g>
+
+  <!-- Row 1: Blue dot + line -->
+  <circle cx="36" cy="40" r="8" fill="#007AFF" />
+  <circle cx="36" cy="40" r="3.2" fill="#FFFFFF" opacity="0.92" />
+  <rect x="52" y="36" width="46" height="8" rx="4" fill="#1E293B" opacity="0.82" />
+
+  <!-- Row 2: Orange dot + line -->
+  <circle cx="36" cy="64" r="8" fill="#FF9500" />
+  <circle cx="36" cy="64" r="3.2" fill="#FFFFFF" opacity="0.92" />
+  <rect x="52" y="60" width="46" height="8" rx="4" fill="#1E293B" opacity="0.65" />
+
+  <!-- Row 3: Pink/Red dot + line -->
+  <circle cx="36" cy="88" r="8" fill="#FF2D55" />
+  <circle cx="36" cy="88" r="3.2" fill="#FFFFFF" opacity="0.92" />
+  <rect x="52" y="84" width="36" height="8" rx="4" fill="#1E293B" opacity="0.5" />
+</svg>

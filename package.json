@@ -1,11 +1,14 @@
 {
   "name": "dsh-apple-reminders",
-  "version": "2.1.3",
+  "version": "2.2.0",
   "description": "A to-do list in the DeepSeek Harness right sidebar, two-way synced with Apple Reminders.",
   "keywords": [
     "dsh",
     "dsh-plugin",
     "deepseek-harness",
+    "antigravity",
+    "antigravity-plugin",
+    "mcp",
     "todo",
     "todo-list",
     "reminders",
@@ -37,6 +40,12 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
+    "plugin.json",
+    "mcp_config.json",
+    "mcp",
+    "skills",
+    "sidecars",
+    "assets",
     "README.md",
     "LICENSE",
     "test"

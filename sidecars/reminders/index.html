@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reminders</title>
+  <style>
+    :root {
+      --dsw-alias-bg-base: var(--background);
+    }
+    html, body, #root {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+  </style>
+  <script src="/preload.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script>
+    (function setupThemeSync() {
+      function parseColorLuminance(raw) {
+        if (!raw || raw === 'transparent') return null;
+        const s = String(raw).trim();
+        if (!s) return null;
+        const hex = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+        if (hex) {
+          const h = hex[1];
+          const r = parseInt(h.length === 3 ? h[0] + h[0] : h.slice(0, 2), 16);
+          const g = parseInt(h.length === 3 ? h[1] + h[1] : h.slice(2, 4), 16);
+          const b = parseInt(h.length === 3 ? h[2] + h[2] : h.slice(4, 6), 16);
+          return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+        }
+        const rgb = s.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,/\s]+([\d.]+%?))?/i);
+        if (rgb) {
+          if (rgb[4] !== undefined && parseFloat(rgb[4]) === 0) return null;
+          return (0.2126 * Number(rgb[1]) + 0.7152 * Number(rgb[2]) + 0.0722 * Number(rgb[3])) / 255;
+        }
+        return null;
+      }
+
+      function resolveCssColorToRgb(cssColor) {
+        if (!document.body) return '';
+        const probe = document.createElement('span');
+        probe.style.display = 'none';
+        probe.style.backgroundColor = cssColor;
+        document.body.appendChild(probe);
+        const computed = window.getComputedStyle(probe).backgroundColor || '';
+        probe.remove();
+        return computed;
+      }
+
+      function applyThemeFromHost() {
+        const docEl = document.documentElement;
+        if (!docEl) return;
+        const rawBg = window.getComputedStyle(docEl).getPropertyValue('--background').trim();
+        let lum = parseColorLuminance(rawBg);
+        let resolvedForDsh = rawBg ? 'var(--background)' : '';
+
+        if (lum === null && rawBg) {
+          const computedRgb = resolveCssColorToRgb(rawBg);
+          lum = parseColorLuminance(computedRgb);
+          if (lum !== null && computedRgb) {
+            resolvedForDsh = computedRgb;
+          }
+        }
+
+        if (lum === null) {
+          const prefersLight =
+            typeof window.matchMedia === 'function' &&
+            window.matchMedia('(prefers-color-scheme: light)').matches;
+          lum = prefersLight ? 1 : 0;
+          resolvedForDsh = prefersLight ? '#ffffff' : '#1e1e20';
+        }
+
+        const nextTheme = lum > 0.5 ? 'light' : 'dark';
+        if (docEl.dataset.theme !== nextTheme) {
+          docEl.dataset.theme = nextTheme;
+        }
+        if (docEl.style.getPropertyValue('--dsw-alias-bg-base') !== resolvedForDsh) {
+          docEl.style.setProperty('--dsw-alias-bg-base', resolvedForDsh);
+        }
+      }
+
+      applyThemeFromHost();
+
+      window.addEventListener('message', function (event) {
+        if (event.data && event.data.type === 'theme-change') {
+          applyThemeFromHost();
+        }
+      });
+
+      const mq =
+        typeof window.matchMedia === 'function'
+          ? window.matchMedia('(prefers-color-scheme: light)')
+          : null;
+      if (mq && typeof mq.addEventListener === 'function') {
+        mq.addEventListener('change', applyThemeFromHost);
+      }
+    })();
+  </script>
+
+  <script src="/vendor/react.js"></script>
+  <script src="/vendor/react-dom.js"></script>
+
+  <script>
+    (function setupDshBootstrap() {
+      // 1. Wrap `window.fetch` so `dsh-todo/client.js` calls to `api/dsh-apple-reminders/op`
+      //    route through `window.sidecar.fetch` (attaching `X-Sidecar-Token` for POST).
+      //    Guard against recursion because `preload.js`'s `sidecar.fetch` calls global `fetch`.
+      const nativeFetch = window.fetch.bind(window);
+      let inSidecarFetch = false;
+
+      function resolvePathname(input) {
+        try {
+          const rawUrl =
+            typeof input === 'string'
+              ? input
+              : input && typeof input.url === 'string'
+                ? input.url
+                : String(input);
+          return new URL(rawUrl, window.location.href).pathname;
+        } catch {
+          return '';
+        }
+      }
+
+      window.fetch = function sidecarAwareFetch(input, init) {
+        if (inSidecarFetch) {
+          return nativeFetch(input, init);
+        }
+        const pathname = resolvePathname(input);
+        if (
+          pathname.endsWith('/api/dsh-apple-reminders/op') &&
+          window.sidecar &&
+          typeof window.sidecar.fetch === 'function'
+        ) {
+          inSidecarFetch = true;
+          try {
+            return window.sidecar.fetch('/api/dsh-apple-reminders/op', init || {});
+          } finally {
+            inSidecarFetch = false;
+          }
+        }
+        return nativeFetch(input, init);
+      };
+
+      // 2. Shim `window.EventSource` for `api/dsh-apple-reminders/events` using ETag polling
+      //    every 1500ms against `/api/dsh-apple-reminders/poll`.
+      const NativeEventSource = window.EventSource;
+      const POLL_INTERVAL_MS = 1500;
+
+      class RemindersPollEventSource {
+        static CONNECTING = 0;
+        static OPEN = 1;
+        static CLOSED = 2;
+
+        constructor(url, eventSourceInitDict) {
+          const pathname = resolvePathname(url);
+          if (!pathname.endsWith('/api/dsh-apple-reminders/events')) {
+            if (typeof NativeEventSource === 'function') {
+              return new NativeEventSource(url, eventSourceInitDict);
+            }
+            throw new Error('EventSource unsupported for ' + url);
+          }
+
+          this.CONNECTING = 0;
+          this.OPEN = 1;
+          this.CLOSED = 2;
+          this.url = String(url);
+          this.withCredentials = Boolean(eventSourceInitDict && eventSourceInitDict.withCredentials);
+          this.readyState = 0;
+          this.onopen = null;
+          this.onmessage = null;
+          this.onerror = null;
+          this._listeners = { open: new Set(), message: new Set(), error: new Set() };
+          this._closed = false;
+          this._etag = '';
+          this._prevRev = -1;
+          this._inFlight = false;
+          this._timer = null;
+
+          this._openTimer = window.setTimeout(() => {
+            if (this._closed) return;
+            this.readyState = 1;
+            const openEvt = new Event('open');
+            if (typeof this.onopen === 'function') this.onopen(openEvt);
+            for (const fn of this._listeners.open) fn(openEvt);
+            void this._poll();
+            this._timer = window.setInterval(() => {
+              void this._poll();
+            }, POLL_INTERVAL_MS);
+          }, 0);
+        }
+
+        async _poll() {
+          if (this._closed || this._inFlight) return;
+          this._inFlight = true;
+          try {
+            const qs = this._etag ? '?etag=' + encodeURIComponent(this._etag) : '';
+            const pollUrl = '/api/dsh-apple-reminders/poll' + qs;
+            let res;
+            if (window.sidecar && typeof window.sidecar.fetch === 'function') {
+              inSidecarFetch = true;
+              try {
+                res = await window.sidecar.fetch(pollUrl, { method: 'GET' });
+              } finally {
+                inSidecarFetch = false;
+              }
+            } else {
+              res = await nativeFetch(pollUrl, { method: 'GET', cache: 'no-store' });
+            }
+            if (this._closed || !res || !res.ok) return;
+            const payload = await res.json().catch(() => null);
+            if (this._closed || !payload || typeof payload !== 'object') return;
+
+            if (typeof payload.etag === 'string') {
+              this._etag = payload.etag;
+            }
+            if (!payload.unchanged && payload.state) {
+              if (typeof payload.state.rev === 'number') {
+                if (this._prevRev >= 0 && payload.state.rev < this._prevRev && typeof this.onopen === 'function') {
+                  this.onopen(new Event('open'));
+                }
+                this._prevRev = payload.state.rev;
+              }
+              const msgEvt = { type: 'message', data: JSON.stringify(payload.state) };
+              if (typeof this.onmessage === 'function') this.onmessage(msgEvt);
+              for (const fn of this._listeners.message) fn(msgEvt);
+            }
+          } catch (err) {
+            if (!this._closed) {
+              const errEvt = new Event('error');
+              if (typeof this.onerror === 'function') this.onerror(errEvt);
+              for (const fn of this._listeners.error) fn(errEvt);
+            }
+          } finally {
+            this._inFlight = false;
+          }
+        }
+
+        addEventListener(type, listener) {
+          if (this._listeners[type] && typeof listener === 'function') {
+            this._listeners[type].add(listener);
+          }
+        }
+
+        removeEventListener(type, listener) {
+          if (this._listeners[type] && typeof listener === 'function') {
+            this._listeners[type].delete(listener);
+          }
+        }
+
+        close() {
+          this._closed = true;
+          this.readyState = 2;
+          if (this._openTimer !== null) {
+            window.clearTimeout(this._openTimer);
+            this._openTimer = null;
+          }
+          if (this._timer !== null) {
+            window.clearInterval(this._timer);
+            this._timer = null;
+          }
+        }
+      }
+
+      window.EventSource = RemindersPollEventSource;
+
+      // 3. Shim `window.__ModuleLoader__` to capture `TodoPanel` + `{ zh, en }` from
+      //    `dsh-todo/client.js` and mount directly into `#root`.
+      window.__ModuleLoader__ = {
+        load(mod) {
+          if (!mod || typeof mod.factory !== 'function') {
+            throw new Error('Invalid DSH client module');
+          }
+
+          let TodoPanel = null;
+          let dictionaries = { zh: {}, en: {} };
+
+          function chooseLang() {
+            const navLang =
+              typeof navigator !== 'undefined' && typeof navigator.language === 'string'
+                ? navigator.language.toLowerCase()
+                : 'en';
+            return navLang.startsWith('zh') ? 'zh' : 'en';
+          }
+
+          function t(key, vars) {
+            const lang = chooseLang();
+            const primary = dictionaries[lang] || dictionaries.en || {};
+            const fallback = dictionaries.en || dictionaries.zh || {};
+            const raw = primary[key] ?? fallback[key] ?? key;
+            const str = String(raw);
+            if (!vars || typeof vars !== 'object') return str;
+            return str.replace(/\{(\w+)\}/g, function (match, name) {
+              return Object.prototype.hasOwnProperty.call(vars, name) &&
+                vars[name] !== undefined &&
+                vars[name] !== null
+                ? String(vars[name])
+                : match;
+            });
+          }
+
+          const stubCordisCtx = {
+            effect(fn) {
+              if (typeof fn === 'function') fn();
+              return function () {};
+            },
+            inject(_deps, fn) {
+              if (typeof fn === 'function') fn(stubCordisCtx);
+              return function () {};
+            },
+            locale: {
+              register(_ns, dicts) {
+                if (dicts && typeof dicts === 'object') {
+                  dictionaries = dicts;
+                }
+                return function () {};
+              },
+              bind() {
+                return t;
+              },
+            },
+            sidebarRightTabs: {
+              register() {
+                return function () {};
+              },
+            },
+            slots: {
+              inject(_slotName, fn) {
+                if (typeof fn === 'function') fn();
+                return function () {};
+              },
+              register(_meta, component) {
+                TodoPanel = component;
+                return function () {};
+              },
+            },
+            sidebarRight: {
+              commandTarget() {
+                return undefined;
+              },
+              openTabs: {
+                getSnapshot() {
+                  return [];
+                },
+              },
+              close() {},
+              closeIn() {},
+              openTabFromTarget() {},
+            },
+            shortcuts: {
+              register() {
+                return function () {};
+              },
+            },
+          };
+
+          const plugin = mod.factory(function requireShim(id) {
+            if (id === 'react') return window.React;
+            if (id === 'react-dom') return window.ReactDOM;
+            return null;
+          });
+
+          if (plugin && typeof plugin.apply === 'function') {
+            plugin.apply(stubCordisCtx);
+          }
+
+          if (typeof TodoPanel !== 'function') {
+            throw new Error('dsh-todo client failed to register TodoPanel');
+          }
+
+          const container = document.getElementById('root');
+          const root = window.ReactDOM.createRoot(container);
+          root.render(window.React.createElement(TodoPanel, { t }));
+        },
+      };
+    })();
+  </script>
+
+  <script src="/dsh-client.js"></script>
+</body>
+</html>

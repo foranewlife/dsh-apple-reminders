@@ -19,6 +19,8 @@ jobs:
         run: node test/host-check.mjs
       - name: The panel renders in every state
         run: node test/render-check.mjs
+      - name: Antigravity plugin, MCP server and sidecar
+        run: node test/agy-check.mjs
 
   publish:
     # Publishing runs from GitHub's network, so it does not depend on the
