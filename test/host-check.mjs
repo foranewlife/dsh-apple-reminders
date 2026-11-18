@@ -16,8 +16,16 @@ import { promisify } from 'node:util'
 
 import { apply } from '../index.js'
 import { readLists, remindersAvailable } from '../lib/reminders.js'
-import { normalizeState, TodoStore, loadState } from '../lib/store.js'
-import { CHEAP_FIELDS, planMerge, planPush } from '../lib/sync.js'
+import {
+  extractInlineTags,
+  localDateString,
+  nextDueDate,
+  normalizeState,
+  TodoStore,
+  TRASH_MS,
+  loadState,
+} from '../lib/store.js'
+import { CHEAP_FIELDS, FIELDS, planMerge, planPush } from '../lib/sync.js'
 
 const run = promisify(execFile)
 
@@ -122,6 +130,15 @@ function plannerChecks() {
   const moved = planPush([{ id: 'p', text: '搬家', done: false, list: 'B', reminderId: 'r-p', synced: { text: '搬家', done: false, list: 'A' }, pushedAt: now }], { now, listOf })
   equal(moved.move, [{ itemId: 'p', reminderId: 'r-p', from: 'A', to: 'B' }], 'a task moved here moves its reminder')
 
+  const timedPush = planPush([
+    { id: 't1', text: '带时间', done: false, due: '2026-12-01', dueTime: '09:30', reminderId: 'r-t1', synced: { text: '带时间', done: false, due: '2026-12-01' }, pushedAt: now },
+    { id: 't2', text: '清时间', done: false, due: '2026-12-01', reminderId: 'r-t2', synced: { text: '清时间', done: false, due: '2026-12-01', dueTime: '14:00' }, pushedAt: now },
+  ], { now, listOf })
+  equal(timedPush.update.map((entry) => [entry.itemId, entry.patch]), [
+    ['t1', { dueTime: '09:30' }],
+    ['t2', { dueTime: undefined }],
+  ], 'dueTime additions and removals are pushed')
+
   console.log('planMerge')
   const items = [
     { id: 'a', text: '这里改的', done: false, reminderId: 'r-a', synced: { text: '旧文字', done: false } },
@@ -216,6 +233,27 @@ function plannerChecks() {
   )
   equal(upgrade.pull.map((entry) => entry.fields), [{ done: true, notes: '旧备注' }], 'first contact pulls what the mirror already had')
   equal(upgrade.adopt.length, 1, 'and records a baseline for every field')
+
+  check(FIELDS.includes('dueTime'), 'FIELDS includes dueTime')
+  const timedMerge = planMerge(
+    [
+      { id: 'm1', text: '手机改时间', done: false, due: '2026-12-01', reminderId: 'r-m1', synced: { text: '手机改时间', done: false, due: '2026-12-01' } },
+      { id: 'm2', text: '双端改时间', done: false, due: '2026-12-01', dueTime: '09:00', reminderId: 'r-m2', synced: { text: '双端改时间', done: false, due: '2026-12-01', dueTime: '08:00' } },
+    ],
+    [mirrorOf('A', [
+      { id: 'r-m1', name: '手机改时间', completed: false, due: '2026-12-01', dueTime: '15:30' },
+      { id: 'r-m2', name: '双端改时间', completed: false, due: '2026-12-01', dueTime: '10:00' },
+    ])],
+    [], { now, listOf },
+  )
+  equal(timedMerge.pull.map((entry) => [entry.itemId, entry.fields]), [['m1', { dueTime: '15:30' }]], 'phone dueTime edit is pulled')
+  equal(timedMerge.update.map((entry) => [entry.itemId, entry.patch]), [['m2', { dueTime: '09:00' }]], 'dueTime conflict resolves in DSH favour')
+  const cheapTimed = planMerge(
+    [{ id: 'm1', text: '手机改时间', done: false, due: '2026-12-01', reminderId: 'r-m1', synced: { text: '手机改时间', done: false, due: '2026-12-01' } }],
+    [mirrorOf('A', [{ id: 'r-m1', name: '手机改时间', completed: false, due: '2026-12-01', dueTime: '15:30' }])],
+    [], { now, listOf, fields: CHEAP_FIELDS },
+  )
+  equal(cheapTimed.pull.length, 0, 'cheap poll ignores dueTime')
 }
 
 // ------------------------------------------------------------------ store ---
@@ -242,6 +280,32 @@ async function storeChecks(dir) {
   equal(full.doneAt, 1000, 'a completed task without a completion time is dated by its creation')
   equal(full.synced, { text: '全字段', done: false, due: '2026-12-02' }, 'the baseline keeps the fields it had')
   equal(normalizeState({ items: [{ id: 'x', text: '坏日期', due: 'tomorrow' }] }).items[0].due, undefined, 'a malformed date is dropped')
+
+  const rich = normalizeState({
+    items: [{
+      id: 'r1', text: '丰富字段', done: false, due: '2026-12-01', dueTime: '9:05',
+      urgent: true, tags: ['#Work', 'work', ' Home '], url: 'https://example.com',
+      repeat: 'weekdays', location: 'Arriving Home', parentId: 'r1', section: 'Morning', order: 2,
+    }],
+    trash: [
+      { id: 'tr1', text: '近期删除', deletedAt: Date.now() - 1000, reminderId: 'r-old', synced: { text: '近期删除', done: false } },
+      { id: 'tr2', text: '过期删除', deletedAt: Date.now() - TRASH_MS - 1000 },
+    ],
+    settings: {
+      lists: ['工作'],
+      listMeta: { 工作: { color: '#0A84FF', icon: '💼', pinned: true, sections: ['上午', '上午', '下午'] } },
+    },
+  })
+  const rItem = rich.items[0]
+  equal([rItem.dueTime, rItem.urgent, rItem.tags, rItem.url, rItem.repeat, rItem.location, rItem.parentId, rItem.section, rItem.order],
+    ['09:05', true, ['work', 'home'], 'https://example.com', 'weekdays', 'Arriving Home', undefined, 'Morning', 2],
+    'new task fields normalize cleanly and self-parentId is dropped')
+  equal(rich.trash.map((entry) => entry.id), ['tr1'], 'trash prunes entries older than 30 days')
+  equal(rich.trash[0].reminderId, undefined, 'trash strips reminderId mirror binding')
+  equal(rich.settings.listMeta['工作'], { color: '#0A84FF', icon: '💼', pinned: true, sections: ['上午', '下午'] }, 'listMeta normalizes and deduplicates sections')
+  equal(extractInlineTags('买牛奶 #Groceries #urgent #groceries'), ['groceries', 'urgent'], 'extractInlineTags deduplicates and lowercases')
+  equal(nextDueDate('2026-11-20', 'weekdays'), '2026-11-23', 'nextDueDate skips weekends for weekdays repeat')
+  equal(nextDueDate('2026-01-31', 'monthly'), '2026-02-28', 'nextDueDate clamps month-end dates')
 }
 
 // ------------------------------------------------------------- plugin I/O ---
@@ -320,6 +384,108 @@ async function pluginChecks(dir) {
 
   const migrated = await post(world, { op: 'migrate', items: [{ text: '三', done: false }] })
   equal(migrated.payload.state.items.some((item) => item.text === '三'), true, 'migrate merges by text')
+
+  // --- New Apple Reminders parity features ---
+  // 1. Rich fields + auto-today for dueTime + subtasks
+  const richAdded = await post(world, {
+    op: 'add',
+    text: '带全量字段',
+    dueTime: '09:00',
+    urgent: true,
+    tags: ['#Work', 'urgent'],
+    url: 'https://example.com/spec',
+    repeat: 'daily',
+    location: 'Arriving Home',
+    section: 'Morning',
+  })
+  const richTask = richAdded.payload.state.items.find((item) => item.text === '带全量字段')
+  equal(
+    [richTask.due, richTask.dueTime, richTask.urgent, richTask.tags, richTask.url, richTask.repeat, richTask.location, richTask.section],
+    [localDateString(), '09:00', true, ['work', 'urgent'], 'https://example.com/spec', 'daily', 'Arriving Home', 'Morning'],
+    'add sets all new fields and auto-fills due to today when dueTime is provided',
+  )
+
+  const subAdded = await post(world, { op: 'add', text: '子任务', parentId: richTask.id })
+  const subTask = subAdded.payload.state.items.find((item) => item.text === '子任务')
+  equal([subTask.parentId, subTask.list, subTask.section], [richTask.id, richTask.list, 'Morning'], 'subtask inherits parent list and section')
+
+  // 2. Completing a repeating task spawns next occurrence
+  const repAdded = await post(world, {
+    op: 'add', text: '每日站会', due: '2026-12-01', dueTime: '09:30', repeat: 'daily', tags: ['standup'], urgent: true,
+  })
+  const repId = repAdded.payload.state.items.find((item) => item.text === '每日站会').id
+  const repToggled = await post(world, { op: 'toggle', id: repId })
+  const repCompleted = repToggled.payload.state.items.find((item) => item.id === repId)
+  const repSpawned = repToggled.payload.state.items.find((item) => item.id !== repId && item.text === '每日站会')
+  equal([repCompleted.done, repCompleted.repeat], [true, undefined], 'toggling a repeating task completes the current instance and clears its repeat')
+  equal(
+    [repSpawned?.done, repSpawned?.due, repSpawned?.dueTime, repSpawned?.repeat, repSpawned?.urgent, repSpawned?.tags],
+    [false, '2026-12-02', '09:30', 'daily', true, ['standup']],
+    'and spawns the next open occurrence with advanced due date',
+  )
+
+  // 3. Reorder
+  const reordered = await post(world, { op: 'reorder', ids: [subTask.id, richTask.id] })
+  equal(
+    [
+      reordered.payload.state.items.find((i) => i.id === subTask.id).order,
+      reordered.payload.state.items.find((i) => i.id === richTask.id).order,
+    ],
+    [0, 1],
+    'reorder assigns sequential order indices',
+  )
+
+  // 4. Soft-delete to trash, restore, destroy, empty_trash
+  const softDel = await post(world, { op: 'remove', id: richTask.id })
+  equal(softDel.payload.state.items.some((i) => i.id === richTask.id || i.id === subTask.id), false, 'soft remove deletes parent and subtasks from items')
+  equal(softDel.payload.state.trash.some((i) => i.id === richTask.id), true, 'soft remove moves parent into trash')
+  equal(softDel.payload.state.trash.some((i) => i.id === subTask.id), true, 'soft remove moves subtasks into trash')
+  equal(softDel.payload.state.sync.trashCount, softDel.payload.state.trash.length, 'sync.trashCount matches trash.length')
+
+  const restored = await post(world, { op: 'restore', id: richTask.id })
+  equal(restored.payload.state.items.some((i) => i.id === richTask.id), true, 'restore brings parent back to items')
+  equal(restored.payload.state.items.some((i) => i.id === subTask.id), true, 'restore brings subtasks back to items')
+
+  await post(world, { op: 'remove', id: richTask.id })
+  const destroyed = await post(world, { op: 'destroy', id: richTask.id })
+  equal(destroyed.payload.state.trash.some((i) => i.id === richTask.id || i.id === subTask.id), false, 'destroy permanently removes item and subtasks from trash')
+
+  await post(world, { op: 'remove', id: repId })
+  const emptied = await post(world, { op: 'empty_trash' })
+  equal([emptied.payload.state.trash.length, emptied.payload.state.sync.trashCount], [0, 0], 'empty_trash clears all trash')
+
+  // 5. List management: create_list, update_list (pin/rename/sections), delete_list
+  const createdList = await post(world, {
+    op: 'create_list', name: '购物单', color: '#30D158', icon: '🛒', pinned: true, sections: ['水果'],
+  })
+  check(createdList.payload.state.sync.lists.includes('购物单'), 'create_list adds list to sync.lists')
+  const metaCreated = createdList.payload.state.sync.listMeta.find((m) => m.name === '购物单')
+  equal(metaCreated, { name: '购物单', color: '#30D158', icon: '🛒', pinned: true, sections: ['水果'] }, 'create_list stores listMeta')
+
+  await post(world, { op: 'add', text: '买苹果', list: '购物单', section: '水果' })
+  const updatedList = await post(world, {
+    op: 'update_list', name: '购物单', newName: '超市清单', pinned: false, addSection: '日用品',
+  })
+  check(updatedList.payload.state.sync.lists.includes('超市清单') && !updatedList.payload.state.sync.lists.includes('购物单'), 'update_list renames list')
+  equal(updatedList.payload.state.items.find((i) => i.text === '买苹果')?.list, '超市清单', 'update_list migrates tasks to renamed list')
+  const metaUpdated = updatedList.payload.state.sync.listMeta.find((m) => m.name === '超市清单')
+  equal([metaUpdated.pinned, metaUpdated.sections], [undefined, ['水果', '日用品']], 'update_list updates pinned and sections')
+
+  const deletedList = await post(world, { op: 'delete_list', name: '超市清单' })
+  check(!deletedList.payload.state.sync.lists.includes('超市清单'), 'delete_list removes list from sync.lists')
+  check(deletedList.payload.state.trash.some((i) => i.text === '买苹果'), 'delete_list soft-deletes tasks in that list to trash')
+
+  // 6. Tool schema & new ops via personal_todos
+  const toolWithTrash = await tool.execute({ op: 'list', includeTrash: true })
+  check(Array.isArray(toolWithTrash.trash) && toolWithTrash.trash.length > 0, 'personal_todos includeTrash returns trash array')
+  const toolRich = await tool.execute({
+    op: 'add', text: '工具加复杂任务', due: '2026-12-30', dueTime: '18:00', urgent: true, tags: ['tool'], repeat: 'weekly', location: 'Home',
+  })
+  const toolRichRow = toolRich.items.find((i) => i.text === '工具加复杂任务')
+  equal([toolRichRow.dueTime, toolRichRow.urgent, toolRichRow.tags, toolRichRow.repeat, toolRichRow.location],
+    ['18:00', true, ['tool'], 'weekly', 'Home'], 'personal_todos supports all new task fields')
+  check(tool.output.render({ op: 'list' }, toolRich)[0].text.includes('⏰紧急'), 'tool renderer formats urgent badge')
+
   return world
 }
 

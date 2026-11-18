@@ -13,13 +13,37 @@
  *
  * @module dsh-apple-reminders
  */
-import {
-  createReminder, deleteReminder, ensureLists, listColors, listNames, moveReminder, readLists, remindersAvailable, updateReminder,
-} from './lib/reminders.js'
 import { existsSync } from 'node:fs'
 
-import { defaultFilePath, legacyFilePath, loadState, newId, pruneTombstones, TodoStore } from './lib/store.js'
-import { CHEAP_FIELDS, FIELDS, fromItem, planMerge, planPush, toMirror } from './lib/sync.js'
+import {
+  createList,
+  createReminder,
+  deleteList,
+  deleteReminder,
+  ensureLists,
+  listDetails,
+  moveReminder,
+  readLists,
+  remindersAvailable,
+  updateListMirror,
+  updateReminder,
+} from './lib/reminders.js'
+import {
+  defaultFilePath,
+  extractInlineTags,
+  legacyFilePath,
+  loadState,
+  localDateString,
+  newId,
+  nextDueDate,
+  normalizeDueTime,
+  normalizeTags,
+  pruneTombstones,
+  pruneTrash,
+  REPEAT_VALUES,
+  TodoStore,
+} from './lib/store.js'
+import { CHEAP_FIELDS, FIELDS, planMerge, planPush, toMirror } from './lib/sync.js'
 
 /** The model-facing tool name; `todo_write` and `run_code` belong to the product. */
 const TOOL_NAME = 'personal_todos'
@@ -27,7 +51,7 @@ const TOOL_NAME = 'personal_todos'
 const DEFAULT_LIST_NAME = 'DSH 待办'
 /** Background merge while a panel is open; a full pass costs one mirror read. */
 const DEFAULT_SYNC_INTERVAL_MS = 60000
-/** Every Nth background pass reads the expensive fields (notes, due, flag, priority). */
+/** Every Nth background pass reads the expensive fields (notes, due, dueTime, flag, priority). */
 const DETAIL_EVERY = 5
 /** Coalesce a burst of local edits into one push. */
 const PUSH_DEBOUNCE_MS = 600
@@ -35,13 +59,53 @@ const PUSH_DEBOUNCE_MS = 600
 const FRESH_MERGE_MS = 60000
 /** One pass creates at most this many reminders, so a big import stays responsive. */
 const MAX_CREATES_PER_PASS = 20
-/** Fields the panel may set on one task. */
-const PATCHABLE = ['text', 'done', 'notes', 'due', 'flagged', 'priority', 'list']
+/** Fields the panel or tool may set on one task. */
+const PATCHABLE = [
+  'text',
+  'done',
+  'notes',
+  'due',
+  'dueTime',
+  'urgent',
+  'flagged',
+  'priority',
+  'list',
+  'tags',
+  'url',
+  'repeat',
+  'location',
+  'parentId',
+  'section',
+  'order',
+]
+
+/** Shared task item schema properties for strict JSON Schema validation. */
+const TASK_ITEM_PROPERTIES = {
+  id: { type: 'string' },
+  text: { type: 'string' },
+  done: { type: 'boolean' },
+  list: { type: 'string' },
+  createdAt: { type: 'number' },
+  doneAt: { type: 'number' },
+  notes: { type: 'string' },
+  due: { type: 'string' },
+  dueTime: { type: 'string' },
+  urgent: { type: 'boolean' },
+  flagged: { type: 'boolean' },
+  priority: { type: 'number' },
+  tags: { type: 'array', items: { type: 'string' } },
+  url: { type: 'string' },
+  repeat: { type: 'string', enum: ['daily', 'weekdays', 'weekly', 'biweekly', 'monthly', 'yearly'] },
+  location: { type: 'string' },
+  parentId: { type: 'string' },
+  section: { type: 'string' },
+  order: { type: 'number' },
+}
 
 /** @param {unknown} error - any thrown value. @returns {string} a short message. */
 const messageOf = (error) => (error instanceof Error ? error.message : String(error))
 
-/** @param {unknown} value - config value. @returns {string[]} normalized list names. */
+/** @param {object} config - plugin config. @returns {string[]} normalized list names. */
 function readListNames(config) {
   const raw = Array.isArray(config.lists) ? config.lists : []
   const names = raw
@@ -51,6 +115,16 @@ function readListNames(config) {
   const single = typeof config.listName === 'string' && config.listName.trim() !== ''
     ? config.listName.trim() : DEFAULT_LIST_NAME
   return [single]
+}
+
+/** Strip mirror bindings when converting an active item into a soft-deleted trash entry. */
+function toTrashEntry(item, listName, now) {
+  const entry = { ...item, list: listName, deletedAt: now }
+  if (Array.isArray(item.tags)) entry.tags = [...item.tags]
+  delete entry.reminderId
+  delete entry.synced
+  delete entry.pushedAt
+  return entry
 }
 
 /**
@@ -89,6 +163,7 @@ export function apply(ctx, config = {}) {
     log.info?.(`dsh-apple-reminders: importing the list from ${legacyFilePath()}`)
     return store.commit((draft) => {
       draft.items = legacy.items
+      draft.trash = legacy.trash ?? []
       draft.tombstones = legacy.tombstones
       draft.settings = legacy.settings
     })
@@ -107,12 +182,8 @@ export function apply(ctx, config = {}) {
   let availableLists = null
   /** Colour per list name, so the panel can draw the same dots Reminders does. */
   let colourByName = null
-
-  /**
-   * @param {object} item - stored task.
-   * @returns {string} the Reminders list it belongs to.
-   */
-  const listOf = (item) => (typeof item.list === 'string' && item.list !== '' ? item.list : chosenLists()[0])
+  /** Emblem icon per list name when reported by Apple Reminders. */
+  let emblemByName = null
 
   /** @returns {string[]} the lists the user chose to sync; the config seeds this. */
   const chosenLists = () => {
@@ -120,8 +191,38 @@ export function apply(ctx, config = {}) {
     return Array.isArray(stored) && stored.length > 0 ? stored : settings.lists
   }
 
+  /**
+   * @param {object} item - stored task.
+   * @returns {string} the Reminders list it belongs to.
+   */
+  const listOf = (item) => (typeof item.list === 'string' && item.list !== '' ? item.list : chosenLists()[0])
+
   /** @returns {string[]} every list that has to be read: chosen ones plus any task's own. */
   const readNames = () => [...new Set([...chosenLists(), ...store.get().items.map(listOf).filter(Boolean)])]
+
+  /** Refresh `availableLists`, `colourByName`, and `emblemByName` from Apple Reminders. */
+  async function refreshAvailableLists() {
+    if (!settings.reminders) {
+      const state = store.get()
+      const metaNames = Object.keys(state.settings?.listMeta ?? {})
+      availableLists = [...new Set([...chosenLists(), ...metaNames, ...state.items.map(listOf).filter(Boolean)])]
+      return
+    }
+    try {
+      const details = await listDetails()
+      availableLists = details.map((entry) => entry.name)
+      const nextColors = { ...(colourByName ?? {}) }
+      const nextEmblems = { ...(emblemByName ?? {}) }
+      for (const entry of details) {
+        if (entry.color !== '') nextColors[entry.name] = entry.color
+        if (entry.emblem !== '') nextEmblems[entry.name] = entry.emblem
+      }
+      colourByName = nextColors
+      emblemByName = nextEmblems
+    } catch {
+      // Keep previous cached metadata when Reminders cannot be queried right now.
+    }
+  }
 
   /**
    * Run one pass after the previous one; a failure never blocks the queue.
@@ -134,31 +235,92 @@ export function apply(ctx, config = {}) {
     return next
   }
 
-  /** @returns {object} what the panel and the tool read. */
-  function snapshot() {
+  /** Project a single stored item into its public snapshot shape. */
+  function viewItem(item, isTrash = false) {
+    const view = { id: item.id, text: item.text, done: item.done, list: listOf(item) }
+    if (Number.isFinite(item.createdAt)) view.createdAt = item.createdAt
+    if (item.done && Number.isFinite(item.doneAt)) view.doneAt = item.doneAt
+    if (item.notes !== undefined) view.notes = item.notes
+    if (item.due !== undefined) view.due = item.due
+    if (item.dueTime !== undefined) view.dueTime = item.dueTime
+    if (item.urgent === true) view.urgent = true
+    if (item.flagged === true) view.flagged = true
+    if (item.priority !== undefined) view.priority = item.priority
+    if (Array.isArray(item.tags) && item.tags.length > 0) view.tags = [...item.tags]
+    if (item.url !== undefined) view.url = item.url
+    if (item.repeat !== undefined) view.repeat = item.repeat
+    if (item.location !== undefined) view.location = item.location
+    if (item.parentId !== undefined) view.parentId = item.parentId
+    if (item.section !== undefined) view.section = item.section
+    if (Number.isFinite(item.order)) view.order = item.order
+    if (isTrash) view.deletedAt = Number.isFinite(item.deletedAt) ? item.deletedAt : Date.now()
+    return view
+  }
+
+  /**
+   * @param {{includeTrash?: boolean}} [options] - whether to attach top-level `trash` array (default true).
+   * @returns {object} what the panel and the tool read.
+   */
+  function snapshot(options = {}) {
+    const includeTrash = options.includeTrash !== false
     const state = store.get()
+    const lists = chosenLists()
+    const metaMap = state.settings?.listMeta ?? {}
+    const colorFor = (name) => metaMap[name]?.color || colourByName?.[name] || ''
+    const iconFor = (name) => metaMap[name]?.icon || emblemByName?.[name] || ''
+
+    const knownNames = [...new Set([
+      ...lists,
+      ...Object.keys(metaMap),
+      ...(Array.isArray(availableLists) ? availableLists : []),
+      ...state.items.map(listOf).filter(Boolean),
+    ])]
+    const listMeta = knownNames.map((name) => {
+      const m = metaMap[name] ?? {}
+      const out = { name }
+      const color = colorFor(name)
+      const icon = iconFor(name)
+      if (color !== '') out.color = color
+      if (icon !== '') out.icon = icon
+      if (m.pinned === true) out.pinned = true
+      if (Array.isArray(m.sections) && m.sections.length > 0) out.sections = [...m.sections]
+      return out
+    })
+
+    const rawTrash = Array.isArray(state.trash) ? state.trash : []
     const sync = {
       enabled: settings.reminders,
       status: mirrorStatus.status,
-      listName: chosenLists()[0],
-      lists: chosenLists(),
-      listColors: chosenLists().map((name) => colourByName?.[name] ?? ''),
+      listName: lists[0],
+      lists,
+      listColors: lists.map(colorFor),
+      listMeta,
+      trashCount: rawTrash.length,
     }
-    if (Array.isArray(availableLists)) sync.available = availableLists
+    if (Array.isArray(availableLists)) {
+      sync.available = availableLists
+      sync.availableColors = availableLists.map(colorFor)
+      sync.availableLists = availableLists.map((name) => {
+        const entry = { name }
+        const color = colorFor(name)
+        const icon = iconFor(name)
+        if (color !== '') entry.color = color
+        if (icon !== '') entry.icon = icon
+        return entry
+      })
+    }
     if (mirrorStatus.lastSyncAt !== null) sync.lastSyncAt = mirrorStatus.lastSyncAt
     if (mirrorStatus.error !== null) sync.error = mirrorStatus.error
-    return {
+
+    const result = {
       rev: state.rev,
-      items: state.items.map((item) => {
-        const view = { id: item.id, text: item.text, done: item.done, list: listOf(item) }
-        if (item.notes !== undefined) view.notes = item.notes
-        if (item.due !== undefined) view.due = item.due
-        if (item.flagged === true) view.flagged = true
-        if (item.priority !== undefined) view.priority = item.priority
-        return view
-      }),
+      items: state.items.map((item) => viewItem(item, false)),
       sync,
     }
+    if (includeTrash) {
+      result.trash = rawTrash.map((item) => viewItem(item, true))
+    }
+    return result
   }
 
   /** Push the current snapshot to every open panel. */
@@ -196,7 +358,7 @@ export function apply(ctx, config = {}) {
   /** Delete the reminders of tasks that left the list, then forget them. */
   async function flushTombstones() {
     for (const entry of store.get().tombstones) {
-      await deleteReminder(entry.list ?? settings.lists[0], entry.reminderId)
+      await deleteReminder(entry.list ?? chosenLists()[0], entry.reminderId)
       await store.commit((draft) => {
         draft.tombstones = draft.tombstones.filter((candidate) => candidate.reminderId !== entry.reminderId)
       })
@@ -240,8 +402,17 @@ export function apply(ctx, config = {}) {
    * @param {{itemId: string, list: string, reminderId: string, patch: object}} entry - planned write.
    */
   async function pushUpdate(entry) {
+    const current = store.get().items.find((candidate) => candidate.id === entry.itemId)
     const props = {}
     for (const [field, value] of Object.entries(entry.patch)) props[field] = toMirror(field, value)
+    if ('due' in entry.patch || 'dueTime' in entry.patch) {
+      const effectiveDue = 'due' in entry.patch ? entry.patch.due : current?.due
+      const effectiveDueTime = effectiveDue !== undefined
+        ? ('dueTime' in entry.patch ? entry.patch.dueTime : current?.dueTime)
+        : undefined
+      props.due = toMirror('due', effectiveDue)
+      props.dueTime = toMirror('dueTime', effectiveDueTime)
+    }
     const found = await updateReminder(entry.list, entry.reminderId, props)
     await store.commit((draft) => {
       const item = draft.items.find((candidate) => candidate.id === entry.itemId)
@@ -258,6 +429,9 @@ export function apply(ctx, config = {}) {
         if (value === undefined) delete item.synced[field]
         else item.synced[field] = value
       }
+      if ('due' in entry.patch && entry.patch.due === undefined) {
+        delete item.synced.dueTime
+      }
     })
   }
 
@@ -269,7 +443,11 @@ export function apply(ctx, config = {}) {
       const index = draft.items.findIndex((candidate) => (
         candidate.id === entry.itemId && candidate.reminderId === entry.reminderId
       ))
-      if (index >= 0) draft.items.splice(index, 1)
+      if (index < 0) return
+      const [removed] = draft.items.splice(index, 1)
+      const now = Date.now()
+      draft.trash.push(toTrashEntry(removed, listOf(removed), now))
+      pruneTrash(draft, now)
     })
   }
 
@@ -279,19 +457,22 @@ export function apply(ctx, config = {}) {
   async function importItem(entry) {
     await store.commit((draft) => {
       if (draft.items.some((item) => item.reminderId === entry.reminderId)) return
+      const now = Date.now()
       const item = {
         id: newId(),
         text: entry.task.text,
         done: entry.task.done === true,
-        createdAt: Date.now(),
+        createdAt: now,
         list: entry.list,
         reminderId: entry.reminderId,
         synced: { ...entry.task, done: entry.task.done === true, list: entry.list },
       }
-      if (item.done) item.doneAt = Date.now()
-      for (const field of ['notes', 'due', 'flagged', 'priority']) {
+      if (item.done) item.doneAt = now
+      for (const field of ['notes', 'due', 'dueTime', 'flagged', 'priority']) {
         if (entry.task[field] !== undefined) item[field] = entry.task[field]
       }
+      const inlineTags = extractInlineTags(entry.task.text, entry.task.notes)
+      if (inlineTags.length > 0) item.tags = inlineTags
       draft.items.push(item)
     })
   }
@@ -336,19 +517,34 @@ export function apply(ctx, config = {}) {
     await store.commit((draft) => {
       const item = draft.items.find((candidate) => candidate.id === entry.itemId)
       if (item === undefined) return
+      const now = Date.now()
+      const wasDone = item.done === true
       for (const [field, value] of Object.entries(entry.fields)) {
         if (field === 'text') item.text = value
         else if (field === 'done') {
           item.done = value === true
-          if (item.done) item.doneAt = Date.now()
+          if (item.done) item.doneAt = now
           else delete item.doneAt
-        } else if (value === undefined) delete item[field]
-        else item[field] = value
+        } else if (value === undefined) {
+          delete item[field]
+          if (field === 'due') delete item.dueTime
+        } else {
+          item[field] = value
+        }
         if (item.synced !== undefined) {
           if (field === 'done') item.synced.done = value === true
-          else if (value === undefined) delete item.synced[field]
-          else item.synced[field] = value
+          else if (value === undefined) {
+            delete item.synced[field]
+            if (field === 'due') delete item.synced.dueTime
+          } else {
+            item.synced[field] = value
+          }
         }
+      }
+      if (!wasDone && item.done === true && item.repeat !== undefined && REPEAT_VALUES.has(item.repeat)) {
+        const nextTask = buildNextRepeatOccurrence(item, now)
+        delete item.repeat
+        draft.items.push(nextTask)
       }
     })
   }
@@ -381,7 +577,10 @@ export function apply(ctx, config = {}) {
         if (entry.list !== undefined) item.list = entry.list
       })
     }
-    await store.commit((draft) => { pruneTombstones(draft) })
+    await store.commit((draft) => {
+      pruneTombstones(draft)
+      pruneTrash(draft)
+    })
   }
 
   /** Push local edits and deletions; no mirror read, so a click stays fast. */
@@ -401,7 +600,7 @@ export function apply(ctx, config = {}) {
 
   /**
    * Read the mirror and merge both sides.
-   * @param {boolean} detailed - read notes, due, flag and priority too.
+   * @param {boolean} detailed - read notes, due, dueTime, flag and priority too.
    */
   async function mergePass(detailed) {
     await ready
@@ -411,8 +610,8 @@ export function apply(ctx, config = {}) {
       await flushTombstones()
       const names = readNames()
       const lists = await readLists(names, { detailed })
-      // Colours change rarely; only the detailed pass pays for them.
-      if (detailed) colourByName = await listColors().catch(() => colourByName)
+      // List metadata (names, colours, emblems) changes rarely; refresh on detailed pass.
+      if (detailed) await refreshAvailableLists()
       // An empty mirror is still worth creating: it is how the user sees that
       // the sync exists at all.
       const missing = lists.filter((list) => !list.exists).map((list) => list.name)
@@ -432,11 +631,31 @@ export function apply(ctx, config = {}) {
   const pushNow = () => enqueue(pushPass)
   const mergeNow = (detailed = true) => enqueue(() => mergePass(detailed))
 
+  /** Build the next open occurrence when a repeating task is marked done. */
+  function buildNextRepeatOccurrence(item, now = Date.now()) {
+    const next = {
+      id: newId(),
+      text: item.text,
+      done: false,
+      createdAt: now,
+      due: nextDueDate(item.due, item.repeat, now),
+      repeat: item.repeat,
+      list: listOf(item),
+    }
+    for (const field of ['notes', 'dueTime', 'urgent', 'flagged', 'priority', 'url', 'location', 'parentId', 'section', 'order']) {
+      if (item[field] !== undefined) next[field] = item[field]
+    }
+    if (Array.isArray(item.tags) && item.tags.length > 0) next.tags = [...item.tags]
+    return next
+  }
+
   /**
-   * @param {object} patch - `{text, done, notes, due, flagged, priority}`.
+   * Apply a partial task patch onto `item` in place.
+   * @param {object} patch - partial fields.
    * @param {object} item - stored task to edit in place.
    */
   function applyPatch(patch, item) {
+    const explicitDueClear = patch.due === '' || patch.due === null
     for (const field of PATCHABLE) {
       if (patch[field] === undefined) continue
       if (field === 'text') {
@@ -453,102 +672,289 @@ export function apply(ctx, config = {}) {
         if (notes.trim() === '') delete item.notes
         else item.notes = notes
       } else if (field === 'due') {
-        const due = typeof patch.due === 'string' ? patch.due : ''
-        if (due === '') delete item.due
-        else item.due = due
+        const due = typeof patch.due === 'string' ? patch.due.trim() : ''
+        if (due === '') {
+          delete item.due
+          delete item.dueTime
+        } else if (/^\d{4}-\d{2}-\d{2}$/.test(due)) {
+          item.due = due
+        }
+      } else if (field === 'dueTime') {
+        if (explicitDueClear) continue
+        const rawTime = patch.dueTime === null ? '' : String(patch.dueTime).trim()
+        if (rawTime === '') {
+          delete item.dueTime
+        } else {
+          const normalized = normalizeDueTime(rawTime)
+          if (normalized !== undefined) {
+            item.dueTime = normalized
+            if (item.due === undefined) item.due = localDateString()
+          }
+        }
+      } else if (field === 'urgent') {
+        if (patch.urgent === true) item.urgent = true
+        else delete item.urgent
       } else if (field === 'flagged') {
         if (patch.flagged === true) item.flagged = true
         else delete item.flagged
+      } else if (field === 'priority') {
+        const priority = Number(patch.priority)
+        if (Number.isFinite(priority) && priority > 0) {
+          item.priority = Math.min(9, Math.max(1, Math.round(priority)))
+        } else {
+          delete item.priority
+        }
       } else if (field === 'list') {
         const list = typeof patch.list === 'string' ? patch.list.trim() : ''
         if (list !== '') item.list = list
-      } else if (field === 'priority') {
-        const priority = Number(patch.priority)
-        if (Number.isFinite(priority) && priority > 0) item.priority = priority
-        else delete item.priority
+      } else if (field === 'tags') {
+        if (patch.tags === null || patch.tags === '') {
+          delete item.tags
+        } else {
+          const tags = normalizeTags(patch.tags)
+          if (tags.length > 0) item.tags = tags
+          else delete item.tags
+        }
+      } else if (field === 'url') {
+        const url = patch.url === null ? '' : String(patch.url).trim()
+        if (url === '') delete item.url
+        else item.url = url
+      } else if (field === 'repeat') {
+        const repeat = patch.repeat === null ? '' : String(patch.repeat).trim().toLowerCase()
+        if (repeat === '' || repeat === 'none') delete item.repeat
+        else if (REPEAT_VALUES.has(repeat)) item.repeat = repeat
+      } else if (field === 'location') {
+        const loc = patch.location === null ? '' : String(patch.location).trim()
+        if (loc === '') delete item.location
+        else item.location = loc
+      } else if (field === 'parentId') {
+        const pid = patch.parentId === null ? '' : String(patch.parentId).trim()
+        if (pid === '' || pid === item.id) delete item.parentId
+        else item.parentId = pid
+      } else if (field === 'section') {
+        const sec = patch.section === null ? '' : String(patch.section).trim()
+        if (sec === '') delete item.section
+        else item.section = sec
+      } else if (field === 'order') {
+        if (patch.order === null || patch.order === '') {
+          delete item.order
+        } else {
+          const num = Number(patch.order)
+          if (Number.isFinite(num)) item.order = num
+        }
       }
     }
   }
 
   /**
-   * Run one panel operation.
+   * Run one panel or model operation.
    * @param {object} op - `{op, ...}`.
+   * @param {{includeTrash?: boolean}} [viewOptions] - snapshot projection options.
    * @returns {Promise<object>} the state after the operation.
    */
-  async function applyOp(op) {
+  async function applyOp(op, viewOptions = {}) {
     await ready
     const kind = typeof op.op === 'string' ? op.op : 'list'
     switch (kind) {
       case 'list':
-        return snapshot()
+        return snapshot(viewOptions)
       case 'add': {
         const text = String(op.text ?? '').trim()
         if (text === '') throw new Error('task text is empty')
         await store.commit((draft) => {
-          const item = { id: newId(), text, done: false, createdAt: Date.now() }
-          const list = typeof op.list === 'string' && op.list !== '' ? op.list : settings.lists[0]
-          if (list !== settings.lists[0]) item.list = list
+          const activeLists = Array.isArray(draft.settings?.lists) && draft.settings.lists.length > 0
+            ? draft.settings.lists
+            : settings.lists
+          const parent = typeof op.parentId === 'string' && op.parentId.trim() !== ''
+            ? draft.items.find((candidate) => candidate.id === op.parentId.trim())
+            : undefined
+          const fallbackList = parent !== undefined
+            ? (typeof parent.list === 'string' && parent.list !== '' ? parent.list : activeLists[0])
+            : activeLists[0]
+          const explicitList = typeof op.list === 'string' && op.list.trim() !== '' ? op.list.trim() : fallbackList
+          const now = Date.now()
+          const item = { id: newId(), text, done: false, createdAt: now, list: explicitList }
+          if (parent !== undefined && op.section === undefined && parent.section !== undefined) {
+            item.section = parent.section
+          }
           applyPatch(op, item)
           draft.items.push(item)
         })
         schedulePush()
-        return snapshot()
+        return snapshot(viewOptions)
       }
       case 'toggle': {
         const id = String(op.id ?? '')
         await store.commit((draft) => {
           const item = draft.items.find((candidate) => candidate.id === id)
           if (item === undefined) return
-          item.done = !item.done
-          if (item.done) item.doneAt = Date.now()
-          else delete item.doneAt
+          const now = Date.now()
+          const wasDone = item.done === true
+          item.done = !wasDone
+          if (item.done) {
+            item.doneAt = now
+            if (item.repeat !== undefined && REPEAT_VALUES.has(item.repeat)) {
+              const nextTask = buildNextRepeatOccurrence(item, now)
+              delete item.repeat
+              draft.items.push(nextTask)
+            }
+          } else {
+            delete item.doneAt
+          }
         })
         schedulePush()
-        return snapshot()
+        return snapshot(viewOptions)
       }
       case 'update': {
         const id = String(op.id ?? '')
-        const patch = op.patch !== null && typeof op.patch === 'object' ? op.patch : {}
+        const patch = op.patch !== null && typeof op.patch === 'object' ? op.patch : op
         await store.commit((draft) => {
           const item = draft.items.find((candidate) => candidate.id === id)
           if (item === undefined) return
+          const wasDone = item.done === true
           applyPatch(patch, item)
+          if (!wasDone && item.done === true && item.repeat !== undefined && REPEAT_VALUES.has(item.repeat)) {
+            const now = Date.now()
+            const nextTask = buildNextRepeatOccurrence(item, now)
+            delete item.repeat
+            draft.items.push(nextTask)
+          }
         })
         schedulePush()
-        return snapshot()
+        return snapshot(viewOptions)
+      }
+      case 'reorder': {
+        const ids = Array.isArray(op.ids) ? op.ids.map(String) : []
+        if (ids.length > 0) {
+          await store.commit((draft) => {
+            ids.forEach((targetId, index) => {
+              const item = draft.items.find((candidate) => candidate.id === targetId)
+              if (item !== undefined) item.order = index
+            })
+          })
+        }
+        return snapshot(viewOptions)
       }
       case 'remove': {
         const id = String(op.id ?? '')
-        let removed
+        const permanent = op.permanent === true
+        let touchedReminders = false
         await store.commit((draft) => {
-          const index = draft.items.findIndex((candidate) => candidate.id === id)
-          if (index < 0) return
-          removed = draft.items[index]
-          draft.items.splice(index, 1)
-        })
-        if (removed?.reminderId !== undefined) {
-          await store.commit((draft) => {
-            draft.tombstones.push({ reminderId: removed.reminderId, list: listOf(removed), at: Date.now() })
-          })
-          schedulePush()
-        }
-        return snapshot()
-      }
-      case 'clear_done': {
-        await store.commit((draft) => {
-          for (const item of draft.items) {
-            if (item.done && item.reminderId !== undefined) {
-              draft.tombstones.push({ reminderId: item.reminderId, list: listOf(item), at: Date.now() })
+          const now = Date.now()
+          const targetSet = new Set([id])
+          for (const candidate of draft.items) {
+            if (candidate.parentId === id) targetSet.add(candidate.id)
+          }
+          const remaining = []
+          const removedItems = []
+          for (const candidate of draft.items) {
+            if (targetSet.has(candidate.id)) removedItems.push(candidate)
+            else remaining.push(candidate)
+          }
+          draft.items = remaining
+          for (const removed of removedItems) {
+            const ownerList = listOf(removed)
+            if (removed.reminderId !== undefined) {
+              draft.tombstones.push({ reminderId: removed.reminderId, list: ownerList, at: now })
+              touchedReminders = true
+            }
+            if (!permanent) {
+              draft.trash.push(toTrashEntry(removed, ownerList, now))
             }
           }
-          draft.items = draft.items.filter((item) => !item.done)
+          if (removedItems.length === 0 && permanent) {
+            draft.trash = draft.trash.filter((entry) => entry.id !== id && entry.parentId !== id)
+          }
+          pruneTrash(draft, now)
+        })
+        if (touchedReminders) schedulePush()
+        return snapshot(viewOptions)
+      }
+      case 'restore': {
+        const restoreAll = op.all === true
+        const id = String(op.id ?? '')
+        let restoredAny = false
+        await store.commit((draft) => {
+          if (restoreAll) {
+            if (draft.trash.length === 0) return
+            for (const entry of draft.trash) {
+              const copy = { ...entry }
+              delete copy.deletedAt
+              draft.items.push(copy)
+            }
+            draft.trash = []
+            restoredAny = true
+            return
+          }
+          if (id === '') return
+          const targetSet = new Set([id])
+          for (const entry of draft.trash) {
+            if (entry.parentId === id) targetSet.add(entry.id)
+          }
+          const keepTrash = []
+          const restored = []
+          for (const entry of draft.trash) {
+            if (targetSet.has(entry.id)) restored.push(entry)
+            else keepTrash.push(entry)
+          }
+          if (restored.length === 0) return
+          draft.trash = keepTrash
+          const activeIds = new Set([...draft.items.map((x) => x.id), ...restored.map((x) => x.id)])
+          for (const entry of restored) {
+            const copy = { ...entry }
+            delete copy.deletedAt
+            if (copy.parentId !== undefined && !activeIds.has(copy.parentId)) {
+              delete copy.parentId
+            }
+            draft.items.push(copy)
+          }
+          restoredAny = true
+        })
+        if (restoredAny) schedulePush()
+        return snapshot(viewOptions)
+      }
+      case 'destroy': {
+        const id = String(op.id ?? '')
+        if (id !== '') {
+          await store.commit((draft) => {
+            draft.trash = draft.trash.filter((entry) => entry.id !== id && entry.parentId !== id)
+          })
+        }
+        return snapshot(viewOptions)
+      }
+      case 'empty_trash': {
+        await store.commit((draft) => {
+          draft.trash = []
+        })
+        return snapshot(viewOptions)
+      }
+      case 'clear_done': {
+        const scopeList = typeof op.list === 'string' && op.list.trim() !== '' ? op.list.trim() : null
+        const permanent = op.permanent === true
+        await store.commit((draft) => {
+          const now = Date.now()
+          const keep = []
+          for (const item of draft.items) {
+            const itemList = listOf(item)
+            const matchesScope = scopeList === null || itemList === scopeList
+            if (item.done && matchesScope) {
+              if (item.reminderId !== undefined) {
+                draft.tombstones.push({ reminderId: item.reminderId, list: itemList, at: now })
+              }
+              if (!permanent) draft.trash.push(toTrashEntry(item, itemList, now))
+            } else {
+              keep.push(item)
+            }
+          }
+          draft.items = keep
+          pruneTrash(draft, now)
         })
         schedulePush()
-        return snapshot()
+        return snapshot(viewOptions)
       }
       case 'migrate': {
         const incoming = Array.isArray(op.items) ? op.items : []
-        if (incoming.length === 0) return snapshot()
+        if (incoming.length === 0) return snapshot(viewOptions)
         await store.commit((draft) => {
           // Merge instead of refusing when the list already has something: the
           // usual order is a task added through the model, then the panel opens.
@@ -561,15 +967,16 @@ export function apply(ctx, config = {}) {
             const createdAt = Date.now()
             const item = { id: newId(), text, done, createdAt }
             if (done) item.doneAt = createdAt
+            if (raw !== null && typeof raw === 'object') applyPatch(raw, item)
             draft.items.push(item)
           }
         })
         schedulePush()
-        return snapshot()
+        return snapshot(viewOptions)
       }
       case 'lists':
-        if (settings.reminders) availableLists = await listNames().catch(() => availableLists)
-        return snapshot()
+        await refreshAvailableLists()
+        return snapshot(viewOptions)
       case 'select': {
         const wanted = Array.isArray(op.lists)
           ? [...new Set(op.lists
@@ -581,14 +988,194 @@ export function apply(ctx, config = {}) {
           if (wanted.length === 0) delete draft.settings.lists
           else draft.settings.lists = wanted
         })
-        if (settings.reminders) availableLists = await listNames().catch(() => availableLists)
+        await refreshAvailableLists()
         schedulePush()
         if (settings.reminders) void mergeNow(true)
-        return snapshot()
+        return snapshot(viewOptions)
+      }
+      case 'create_list': {
+        const name = String(op.name ?? op.list ?? '').trim()
+        if (name === '') throw new Error('list name is empty')
+        const color = typeof op.color === 'string' && op.color.trim() !== '' ? op.color.trim() : undefined
+        const icon = typeof op.icon === 'string' && op.icon.trim() !== '' ? op.icon.trim() : undefined
+        const pinned = op.pinned === true
+        const sections = Array.isArray(op.sections)
+          ? [...new Set(op.sections.filter((s) => typeof s === 'string' && s.trim() !== '').map((s) => s.trim()))]
+          : undefined
+        await store.commit((draft) => {
+          const current = Array.isArray(draft.settings.lists) && draft.settings.lists.length > 0
+            ? draft.settings.lists
+            : settings.lists
+          draft.settings.lists = [...new Set([...current, name])]
+          draft.settings.listMeta = { ...(draft.settings.listMeta ?? {}) }
+          const meta = { ...(draft.settings.listMeta[name] ?? {}) }
+          if (color !== undefined) meta.color = color
+          if (icon !== undefined) meta.icon = icon
+          if (pinned) meta.pinned = true
+          if (sections !== undefined && sections.length > 0) meta.sections = sections
+          draft.settings.listMeta[name] = meta
+        })
+        if (Array.isArray(availableLists) && !availableLists.includes(name)) {
+          availableLists = [...availableLists, name]
+        }
+        if (color !== undefined) colourByName = { ...(colourByName ?? {}), [name]: color }
+        if (icon !== undefined) emblemByName = { ...(emblemByName ?? {}), [name]: icon }
+        if (settings.reminders) {
+          await createList(name, { color, emblem: icon }).catch((error) => {
+            log.warn?.(`dsh-apple-reminders: createList("${name}") failed: ${messageOf(error)}`)
+          })
+        }
+        return snapshot(viewOptions)
+      }
+      case 'update_list': {
+        const name = String(op.name ?? op.list ?? '').trim()
+        if (name === '') throw new Error('list name is empty')
+        const nextName = typeof op.newName === 'string' && op.newName.trim() !== '' ? op.newName.trim() : name
+        const renamed = nextName !== name
+        await store.commit((draft) => {
+          const current = Array.isArray(draft.settings.lists) && draft.settings.lists.length > 0
+            ? [...draft.settings.lists]
+            : [...settings.lists]
+          const defaultBefore = current[0]
+          if (renamed) {
+            const updatedLists = current.map((entry) => (entry === name ? nextName : entry))
+            if (!updatedLists.includes(nextName)) updatedLists.push(nextName)
+            draft.settings.lists = [...new Set(updatedLists)]
+            for (const item of draft.items) {
+              const eff = typeof item.list === 'string' && item.list !== '' ? item.list : defaultBefore
+              if (eff === name) {
+                item.list = nextName
+                if (item.synced !== undefined && (item.synced.list === name || item.synced.list === undefined)) {
+                  item.synced.list = nextName
+                }
+              }
+            }
+            for (const item of draft.trash) {
+              if (item.list === name) item.list = nextName
+            }
+          }
+          draft.settings.listMeta = { ...(draft.settings.listMeta ?? {}) }
+          const meta = { ...(draft.settings.listMeta[name] ?? draft.settings.listMeta[nextName] ?? {}) }
+          if (renamed) delete draft.settings.listMeta[name]
+
+          if (op.color !== undefined) {
+            const c = op.color === null ? '' : String(op.color).trim()
+            if (c === '') delete meta.color
+            else meta.color = c
+          }
+          if (op.icon !== undefined) {
+            const ic = op.icon === null ? '' : String(op.icon).trim()
+            if (ic === '') delete meta.icon
+            else meta.icon = ic
+          }
+          if (op.pinned !== undefined) {
+            if (op.pinned === true) meta.pinned = true
+            else delete meta.pinned
+          }
+          let sections = Array.isArray(meta.sections) ? [...meta.sections] : []
+          if (Array.isArray(op.sections)) {
+            sections = [...new Set(
+              op.sections.filter((s) => typeof s === 'string' && s.trim() !== '').map((s) => s.trim()),
+            )]
+          }
+          if (typeof op.addSection === 'string' && op.addSection.trim() !== '') {
+            const sec = op.addSection.trim()
+            if (!sections.includes(sec)) sections.push(sec)
+          }
+          if (typeof op.removeSection === 'string' && op.removeSection.trim() !== '') {
+            const remSec = op.removeSection.trim()
+            sections = sections.filter((s) => s !== remSec)
+            for (const item of draft.items) {
+              const eff = typeof item.list === 'string' && item.list !== '' ? item.list : draft.settings.lists?.[0] ?? settings.lists[0]
+              if (eff === nextName && item.section === remSec) delete item.section
+            }
+          }
+          if (op.renameSection !== null && typeof op.renameSection === 'object') {
+            const fromSec = String(op.renameSection.from ?? '').trim()
+            const toSec = String(op.renameSection.to ?? '').trim()
+            if (fromSec !== '' && toSec !== '') {
+              sections = [...new Set(sections.map((s) => (s === fromSec ? toSec : s)))]
+              for (const item of draft.items) {
+                const eff = typeof item.list === 'string' && item.list !== '' ? item.list : draft.settings.lists?.[0] ?? settings.lists[0]
+                if (eff === nextName && item.section === fromSec) item.section = toSec
+              }
+            }
+          }
+          if (sections.length > 0) meta.sections = sections
+          else delete meta.sections
+
+          draft.settings.listMeta[nextName] = meta
+        })
+        if (renamed && Array.isArray(availableLists)) {
+          availableLists = [...new Set(availableLists.map((entry) => (entry === name ? nextName : entry)))]
+        }
+        if (colourByName !== null) {
+          if (renamed && colourByName[name] !== undefined) {
+            colourByName[nextName] = colourByName[name]
+            delete colourByName[name]
+          }
+          if (typeof op.color === 'string' && op.color.trim() !== '') colourByName[nextName] = op.color.trim()
+        }
+        if (settings.reminders && (renamed || op.color !== undefined || op.icon !== undefined)) {
+          await updateListMirror(name, {
+            newName: renamed ? nextName : undefined,
+            color: typeof op.color === 'string' ? op.color : undefined,
+            emblem: typeof op.icon === 'string' ? op.icon : undefined,
+          }).catch((error) => {
+            log.warn?.(`dsh-apple-reminders: updateListMirror("${name}") failed: ${messageOf(error)}`)
+          })
+        }
+        return snapshot(viewOptions)
+      }
+      case 'delete_list': {
+        const name = String(op.name ?? op.list ?? '').trim()
+        if (name === '') throw new Error('list name is empty')
+        const deleteInReminders = op.deleteReminders === true
+        let queuedTombstones = false
+        await store.commit((draft) => {
+          const now = Date.now()
+          const current = Array.isArray(draft.settings.lists) && draft.settings.lists.length > 0
+            ? [...draft.settings.lists]
+            : [...settings.lists]
+          const defaultBefore = current[0]
+          const remainingLists = current.filter((entry) => entry !== name)
+          const fallback = remainingLists[0] ?? (settings.lists[0] !== name ? settings.lists[0] : DEFAULT_LIST_NAME)
+          draft.settings.lists = remainingLists.length > 0 ? remainingLists : [fallback]
+          if (draft.settings.listMeta !== undefined) {
+            delete draft.settings.listMeta[name]
+            if (Object.keys(draft.settings.listMeta).length === 0) delete draft.settings.listMeta
+          }
+          const keepItems = []
+          for (const item of draft.items) {
+            const eff = typeof item.list === 'string' && item.list !== '' ? item.list : defaultBefore
+            if (eff === name) {
+              if (!deleteInReminders && item.reminderId !== undefined) {
+                draft.tombstones.push({ reminderId: item.reminderId, list: name, at: now })
+                queuedTombstones = true
+              }
+              draft.trash.push(toTrashEntry(item, fallback, now))
+            } else {
+              keepItems.push(item)
+            }
+          }
+          draft.items = keepItems
+          pruneTrash(draft, now)
+        })
+        if (Array.isArray(availableLists) && deleteInReminders) {
+          availableLists = availableLists.filter((entry) => entry !== name)
+        }
+        if (settings.reminders && deleteInReminders) {
+          await deleteList(name).catch((error) => {
+            log.warn?.(`dsh-apple-reminders: deleteList("${name}") failed: ${messageOf(error)}`)
+          })
+        } else if (queuedTombstones) {
+          schedulePush()
+        }
+        return snapshot(viewOptions)
       }
       case 'sync':
         await mergeNow(true)
-        return snapshot()
+        return snapshot(viewOptions)
       default:
         throw new Error(`unknown operation "${kind}"`)
     }
@@ -599,25 +1186,65 @@ export function apply(ctx, config = {}) {
     toolCtx.effect(() => toolCtx.tools.register({
       name: TOOL_NAME,
       description: [
-        'The user\'s personal to-do list, the same one shown in the right sidebar of the app.',
-        'ops: list (default), add, toggle, update, remove, clear_done, sync (reconcile Apple Reminders now).',
-        'add takes text plus optional list, due (YYYY-MM-DD), notes, flagged, priority (1 low, 5 medium, 9 high).',
-        'toggle and remove need an id; update needs an id and any of text, notes, due, flagged, priority, done.',
+        'The user\'s personal to-do list (Apple Reminders parity), shown in the right sidebar of the app.',
+        'ops: list (default), add, toggle, update, remove, restore, destroy, empty_trash, clear_done, create_list, update_list, delete_list, sync.',
+        'add/update support text, list, due (YYYY-MM-DD), dueTime (HH:MM 24h), notes, urgent, flagged, priority (0 none, 1 high, 5 medium, 9 low), tags, url, repeat (daily|weekdays|weekly|biweekly|monthly|yearly), location, parentId, section, order, done.',
+        'remove soft-deletes into Recently Deleted (30-day retention) unless permanent: true; restore recovers from trash.',
         'The lists are kept in two-way sync with Apple Reminders, so edits made there appear here too.',
         'Complete or remove a task only when the user asks.',
       ].join(' '),
       parameters: {
         type: 'object',
         properties: {
-          op: { type: 'string', enum: ['list', 'add', 'toggle', 'update', 'remove', 'clear_done', 'sync'] },
-          id: { type: 'string', description: 'Task id from a previous list result; required by toggle, update and remove.' },
-          text: { type: 'string', description: 'Task text for add, or the replacement text for update.' },
-          list: { type: 'string', description: 'Reminders list for a new task; defaults to the first configured one.' },
-          due: { type: 'string', description: 'Due date as YYYY-MM-DD, or an empty string to clear it.' },
-          notes: { type: 'string', description: 'Free-form notes; an empty string clears them.' },
+          op: {
+            type: 'string',
+            enum: [
+              'list',
+              'add',
+              'toggle',
+              'update',
+              'remove',
+              'restore',
+              'destroy',
+              'empty_trash',
+              'clear_done',
+              'create_list',
+              'update_list',
+              'delete_list',
+              'sync',
+            ],
+          },
+          id: { type: 'string', description: 'Task id; required by toggle, update, remove, destroy, and single-item restore.' },
+          text: { type: 'string', description: 'Task title for add, or replacement title for update.' },
+          list: { type: 'string', description: 'Target list name; defaults to the primary configured list.' },
+          name: { type: 'string', description: 'List name for create_list, update_list, or delete_list.' },
+          newName: { type: 'string', description: 'Replacement list name for update_list.' },
+          color: { type: 'string', description: 'List colour (hex or Apple colour name) for create_list or update_list.' },
+          icon: { type: 'string', description: 'List icon/emoji for create_list or update_list.' },
+          pinned: { type: 'boolean', description: 'Whether the list is pinned to the top smart grid.' },
+          sections: { type: 'array', items: { type: 'string' }, description: 'Ordered section names inside a list.' },
+          due: { type: 'string', description: 'Due date as YYYY-MM-DD, or empty string to clear.' },
+          dueTime: { type: 'string', description: 'Due time as 24h HH:MM (e.g. 09:00, 15:00, 20:00), or empty string to clear.' },
+          notes: { type: 'string', description: 'Free-form notes; empty string clears them.' },
+          urgent: { type: 'boolean', description: 'Whether the task is marked urgent (alarm).' },
           flagged: { type: 'boolean', description: 'Whether the task is flagged.' },
-          priority: { type: 'number', description: 'Priority: 0 none, 1 low, 5 medium, 9 high.' },
+          priority: { type: 'number', description: 'Priority matching Apple Reminders: 0 none, 1 high, 5 medium, 9 low.' },
+          tags: { type: 'array', items: { type: 'string' }, description: 'Tag names without leading #.' },
+          url: { type: 'string', description: 'Optional associated URL; empty string clears it.' },
+          repeat: {
+            type: 'string',
+            enum: ['daily', 'weekdays', 'weekly', 'biweekly', 'monthly', 'yearly', 'none', ''],
+            description: 'Recurrence rule; completing a repeating task spawns the next occurrence.',
+          },
+          location: { type: 'string', description: 'Location label (e.g. Arriving Home); empty string clears it.' },
+          parentId: { type: 'string', description: 'Parent task id for subtasks; empty string outdents.' },
+          section: { type: 'string', description: 'Section name within the list; empty string clears it.' },
+          order: { type: 'number', description: 'Manual sort order number within a list or section.' },
           done: { type: 'boolean', description: 'Completion state for update.' },
+          all: { type: 'boolean', description: 'When true with restore, recovers all items from Recently Deleted.' },
+          permanent: { type: 'boolean', description: 'When true with remove or clear_done, skips Recently Deleted.' },
+          deleteReminders: { type: 'boolean', description: 'When true with delete_list, also deletes the list in Apple Reminders.' },
+          includeTrash: { type: 'boolean', description: 'Include soft-deleted Recently Deleted items in the returned snapshot.' },
         },
         required: ['op'],
         additionalProperties: false,
@@ -631,17 +1258,20 @@ export function apply(ctx, config = {}) {
               type: 'array',
               items: {
                 type: 'object',
-                properties: {
-                  id: { type: 'string' },
-                  text: { type: 'string' },
-                  done: { type: 'boolean' },
-                  list: { type: 'string' },
-                  notes: { type: 'string' },
-                  due: { type: 'string' },
-                  flagged: { type: 'boolean' },
-                  priority: { type: 'number' },
-                },
+                properties: { ...TASK_ITEM_PROPERTIES },
                 required: ['id', 'text', 'done', 'list'],
+                additionalProperties: false,
+              },
+            },
+            trash: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  ...TASK_ITEM_PROPERTIES,
+                  deletedAt: { type: 'number' },
+                },
+                required: ['id', 'text', 'done', 'list', 'deletedAt'],
                 additionalProperties: false,
               },
             },
@@ -653,11 +1283,41 @@ export function apply(ctx, config = {}) {
                 listName: { type: 'string' },
                 lists: { type: 'array', items: { type: 'string' } },
                 listColors: { type: 'array', items: { type: 'string' } },
+                listMeta: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string' },
+                      color: { type: 'string' },
+                      icon: { type: 'string' },
+                      pinned: { type: 'boolean' },
+                      sections: { type: 'array', items: { type: 'string' } },
+                    },
+                    required: ['name'],
+                    additionalProperties: false,
+                  },
+                },
                 available: { type: 'array', items: { type: 'string' } },
+                availableColors: { type: 'array', items: { type: 'string' } },
+                availableLists: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string' },
+                      color: { type: 'string' },
+                      icon: { type: 'string' },
+                    },
+                    required: ['name'],
+                    additionalProperties: false,
+                  },
+                },
+                trashCount: { type: 'number' },
                 lastSyncAt: { type: 'number' },
                 error: { type: 'string' },
               },
-              required: ['enabled', 'status', 'listName', 'lists'],
+              required: ['enabled', 'status', 'listName', 'lists', 'listColors', 'listMeta', 'trashCount'],
               additionalProperties: false,
             },
           },
@@ -668,7 +1328,11 @@ export function apply(ctx, config = {}) {
           return [{ type: 'text', text: renderList(value) }]
         },
       },
-      execute: async (args) => applyOp(args ?? { op: 'list' }),
+      execute: async (args) => {
+        const req = args ?? { op: 'list' }
+        const includeTrash = req.includeTrash === true || ['restore', 'destroy', 'empty_trash'].includes(req.op)
+        return applyOp(req, { includeTrash })
+      },
     }), 'dsh-apple-reminders: tool')
   })
 
@@ -750,8 +1414,8 @@ export function apply(ctx, config = {}) {
   })
 
   // Background merge only while somebody is looking at the panel. Cheap fields
-  // every tick; notes, due, flag and priority every Nth tick because reading
-  // them costs an Apple event per task.
+  // every tick; notes, due, dueTime, flag and priority every Nth tick because
+  // reading them costs an Apple event per task.
   if (settings.reminders) {
     interval = setInterval(() => {
       if (panels.size === 0) return
@@ -770,23 +1434,37 @@ export function apply(ctx, config = {}) {
 
 /**
  * Render the list as terse text for the transcript.
- * @param {{rev: number, items: object[], sync: object}} value - tool result.
+ * @param {{rev: number, items: object[], trash?: object[], sync: object}} value - tool result.
  * @returns {string} the lines the user reads.
  */
 function renderList(value) {
   const items = Array.isArray(value?.items) ? value.items : []
+  const trashCount = Number.isFinite(value?.sync?.trashCount)
+    ? value.sync.trashCount
+    : (Array.isArray(value?.trash) ? value.trash.length : 0)
   const open = items.filter((item) => !item.done).length
-  if (items.length === 0) return '待办清单是空的。'
+  if (items.length === 0) {
+    return trashCount > 0 ? `待办清单是空的。（最近删除 ${trashCount} 项）` : '待办清单是空的。'
+  }
   const lines = items.map((item) => {
     const marks = []
+    if (item.urgent === true) marks.push('⏰紧急')
     if (item.flagged === true) marks.push('⚑')
-    if (typeof item.due === 'string') marks.push(`截止 ${item.due}`)
+    if (typeof item.due === 'string') {
+      marks.push(`截止 ${item.due}${typeof item.dueTime === 'string' ? ` ${item.dueTime}` : ''}`)
+    }
+    if (typeof item.repeat === 'string') marks.push(`重复:${item.repeat}`)
     if (typeof item.priority === 'number') marks.push(`优先级 ${item.priority}`)
+    if (Array.isArray(item.tags) && item.tags.length > 0) marks.push(item.tags.map((t) => `#${t}`).join(' '))
+    if (typeof item.location === 'string') marks.push(`📍${item.location}`)
+    if (typeof item.section === 'string') marks.push(`分组:${item.section}`)
     if (typeof item.list === 'string') marks.push(item.list)
+    const indent = typeof item.parentId === 'string' ? '  ↳ ' : ''
     const tail = marks.length > 0 ? `  （${marks.join(' · ')}）` : ''
-    return `${item.done ? '[x]' : '[ ]'} ${item.text}${tail}`
+    return `${indent}${item.done ? '[x]' : '[ ]'} ${item.text}${tail}`
   })
-  const head = `待办 · ${items.length} 项（${open} 未完成）`
+  const trashSuffix = trashCount > 0 ? ` · 最近删除 ${trashCount} 项` : ''
+  const head = `待办 · ${items.length} 项（${open} 未完成）${trashSuffix}`
   const STATUS = { idle: '已同步', syncing: '同步中', error: '同步失败', off: '未启用' }
   const lists = Array.isArray(value?.sync?.lists) ? value.sync.lists.join('、') : ''
   const mirror = value?.sync?.enabled === true
