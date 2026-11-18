@@ -15,7 +15,7 @@ import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
 import { apply } from '../index.js'
-import { emojiFrom, readLists, remindersAvailable } from '../lib/reminders.js'
+import { emblemFor, emojiFrom, readLists, remindersAvailable } from '../lib/reminders.js'
 import {
   extractInlineTags,
   localDateString,
@@ -112,6 +112,10 @@ function iconChecks() {
   equal(emojiFrom('{"Image":"x"}'), '', 'an image emblem shows nothing instead of JSON')
   equal(emojiFrom(''), '', 'an empty emblem stays empty')
   equal(emojiFrom(undefined), '', 'a missing emblem is empty')
+  equal(emblemFor('📚'), '{"Emoji" : "📚"}', 'a bare emoji is written in Apple\'s shape')
+  equal(emblemFor('{"Emoji" : "👏"}'), '{"Emoji" : "👏"}', 'an Apple emblem is not double-wrapped')
+  equal(emblemFor(''), '', 'no emblem stays empty')
+  equal(emojiFrom(emblemFor('📚')), '📚', 'what we write reads back as the emoji')
 }
 
 // ---------------------------------------------------------------- plans ---
