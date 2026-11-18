@@ -30,7 +30,7 @@ dsh plugin --profile <profile> add github:foranewlife/dsh-apple-reminders
 
 ```sh
 git clone https://github.com/foranewlife/dsh-apple-reminders.git
-dsh plugin --profile <profile> add link:$PWD/dsh-todo
+dsh plugin --profile <profile> add link:$PWD/dsh-apple-reminders
 ```
 
 ### 从旧名字升级（原来叫 `dsh-todo`）
