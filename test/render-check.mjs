@@ -312,6 +312,17 @@ const inspectorText = textOf(render(states['inspector open']).tree)
 includes(inspectorText, 'editor.url', 'inspector shows URL field')
 includes(inspectorText, 'editor.priority', 'inspector shows Priority field')
 
+const iconText = textOf(render(makeState({
+  view: 'all',
+  sync: {
+    ...sync,
+    listMeta: [{ name: 'SMART', icon: '{"Emoji" : "👏"}', color: '#FF383C' }],
+    emblems: { SMART: '{"Emoji" : "👏"}' },
+  },
+})).tree)
+includes(iconText, '👏', 'renders an Apple emoji emblem as the emoji')
+check(!iconText.includes('Emoji'), 'and never shows the raw JSON')
+
 const titles = textOf(render(states.loaded).tree)
 includes(titles, 'view.all', 'the title names the current view')
 includes(titles, 'view.today', 'the smart lists are shown')

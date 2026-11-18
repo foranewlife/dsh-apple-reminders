@@ -2328,7 +2328,20 @@ window.__ModuleLoader__.load({
 
       const iconOf = (name) => {
         const ic = metaByName[name]?.icon
-        return typeof ic === 'string' && ic.trim() !== '' ? ic.trim() : ''
+        const text = typeof ic === 'string' ? ic.trim() : ''
+        if (text === '') return ''
+        // Apple stores its own emoji emblems as {"Emoji":"👏"}; show the emoji only.
+        if (!text.startsWith('{')) return text
+        try {
+          const parsed = JSON.parse(text)
+          for (const key of ['Emoji', 'emoji', 'Value', 'value', 'Char', 'char', 'Text', 'text']) {
+            const value = parsed === null || typeof parsed !== 'object' ? undefined : parsed[key]
+            if (typeof value === 'string' && value.trim() !== '') return value.trim()
+          }
+        } catch {
+          // Not JSON; nothing renderable.
+        }
+        return ''
       }
 
       const isPinned = (name) => metaByName[name]?.pinned === true

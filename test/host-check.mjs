@@ -15,7 +15,7 @@ import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
 import { apply } from '../index.js'
-import { readLists, remindersAvailable } from '../lib/reminders.js'
+import { emojiFrom, readLists, remindersAvailable } from '../lib/reminders.js'
 import {
   extractInlineTags,
   localDateString,
@@ -101,6 +101,17 @@ async function firstFrame(world) {
   await reader.cancel()
   const line = new TextDecoder().decode(value).split('\n').find((entry) => entry.startsWith('data: '))
   return JSON.parse(line.slice(6))
+}
+
+// ----------------------------------------------------------------- icons ---
+function iconChecks() {
+  console.log('list emblems')
+  equal(emojiFrom('{"Emoji" : "👏"}'), '👏', 'Apple\'s JSON emblem becomes its emoji')
+  equal(emojiFrom('{"Emoji":"🎯"}'), '🎯', 'compact JSON works too')
+  equal(emojiFrom('👏'), '👏', 'a bare emoji passes through')
+  equal(emojiFrom('{"Image":"x"}'), '', 'an image emblem shows nothing instead of JSON')
+  equal(emojiFrom(''), '', 'an empty emblem stays empty')
+  equal(emojiFrom(undefined), '', 'a missing emblem is empty')
 }
 
 // ---------------------------------------------------------------- plans ---
@@ -648,6 +659,7 @@ async function liveChecks(dir) {
 // ------------------------------------------------------------------ main ---
 const dir = await mkdtemp(join(tmpdir(), 'dsh-todo-check-'))
 try {
+  iconChecks()
   plannerChecks()
   await storeChecks(dir)
   const world = await pluginChecks(dir)
