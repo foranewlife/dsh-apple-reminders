@@ -8,7 +8,7 @@
  * sides, and deletes them.
  */
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -269,6 +269,26 @@ function plannerChecks() {
     [], { now, listOf, fields: CHEAP_FIELDS },
   )
   equal(cheapTimed.pull.length, 0, 'cheap poll ignores dueTime')
+
+  const recentCompletedAt = now - 3 * 86400_000
+  const ancientCompletedAt = now - 45 * 86400_000
+  const historyMerge = planMerge(
+    [],
+    [mirrorOf('提醒', [
+      { id: 'r-ancient', name: '2024早已完成', completed: true, completedAt: ancientCompletedAt },
+      { id: 'r-recent', name: '三天前刚完成', completed: true, completedAt: recentCompletedAt },
+      { id: 'r-open', name: '未完成任务', completed: false },
+    ])],
+    [], { now, listOf },
+  )
+  equal(
+    historyMerge.importItems.map((entry) => [entry.reminderId, entry.task.done, entry.task.completedAt ?? null]),
+    [
+      ['r-recent', true, recentCompletedAt],
+      ['r-open', false, null],
+    ],
+    'planMerge skips >30d completed reminders on import while importing recent <30d completed reminders with completedAt',
+  )
 }
 
 // ------------------------------------------------------------------ store ---
@@ -308,6 +328,7 @@ async function storeChecks(dir) {
     ],
     settings: {
       lists: ['工作'],
+      excludedLists: ['归档', ' 归档 ', '旧列表'],
       listMeta: { 工作: { color: '#0A84FF', icon: '💼', pinned: true, sections: ['上午', '上午', '下午'] } },
     },
   })
@@ -317,10 +338,50 @@ async function storeChecks(dir) {
     'new task fields normalize cleanly and self-parentId is dropped')
   equal(rich.trash.map((entry) => entry.id), ['tr1'], 'trash prunes entries older than 30 days')
   equal(rich.trash[0].reminderId, undefined, 'trash strips reminderId mirror binding')
+  equal(rich.settings.excludedLists, ['归档', '旧列表'], 'excludedLists normalizes and deduplicates')
   equal(rich.settings.listMeta['工作'], { color: '#0A84FF', icon: '💼', pinned: true, sections: ['上午', '下午'] }, 'listMeta normalizes and deduplicates sections')
   equal(extractInlineTags('买牛奶 #Groceries #urgent #groceries'), ['groceries', 'urgent'], 'extractInlineTags deduplicates and lowercases')
   equal(nextDueDate('2026-11-20', 'weekdays'), '2026-11-23', 'nextDueDate skips weekends for weekdays repeat')
   equal(nextDueDate('2026-01-31', 'monthly'), '2026-02-28', 'nextDueDate clamps month-end dates')
+
+  // Cross-process external writes reload cleanly without clobbering
+  const sharedFile = join(dir, 'shared-todos.json')
+  const storeA = new TodoStore(sharedFile)
+  const storeB = new TodoStore(sharedFile)
+  await storeA.load()
+  await storeB.load()
+
+  let storeBNotifications = 0
+  storeB.subscribe(() => { storeBNotifications += 1 })
+
+  await storeA.commit((draft) => {
+    draft.settings.lists = ['DSH 待办', '博士答辩']
+    draft.items.push({ id: 'ext-1', text: '外部进程新增1', done: false, list: '博士答辩' })
+  })
+  const didReload = await storeB.reloadIfChanged()
+  equal(didReload, true, 'reloadIfChanged detects external write and reloads disk state')
+  equal(storeBNotifications, 1, 'reloadIfChanged notifies store subscribers')
+  equal(
+    [storeB.get().settings.lists, storeB.get().items.map((i) => i.text)],
+    [['DSH 待办', '博士答辩'], ['外部进程新增1']],
+    'reloaded store sees external lists and items',
+  )
+  equal(await storeB.reloadIfChanged(), false, 'reloadIfChanged is a no-op when mtime has not changed')
+
+  await new Promise((resolve) => setTimeout(resolve, 15))
+  await storeA.commit((draft) => {
+    draft.items.push({ id: 'ext-2', text: '外部进程新增2', done: false, list: '博士答辩' })
+  })
+  // Without calling reloadIfChanged first, storeB.commit must reload disk state before mutating
+  await storeB.commit((draft) => {
+    draft.items.push({ id: 'loc-1', text: '当前进程写入', done: false, list: 'DSH 待办' })
+  })
+  const mergedDisk = await loadState(sharedFile)
+  equal(
+    mergedDisk.items.map((i) => i.text),
+    ['外部进程新增1', '外部进程新增2', '当前进程写入'],
+    'TodoStore.commit reloads external disk edits before mutating instead of clobbering them',
+  )
 }
 
 // ------------------------------------------------------------- plugin I/O ---
@@ -501,6 +562,261 @@ async function pluginChecks(dir) {
     ['18:00', true, ['tool'], 'weekly', 'Home'], 'personal_todos supports all new task fields')
   check(tool.output.render({ op: 'list' }, toolRich)[0].text.includes('⏰紧急'), 'tool renderer formats urgent badge')
 
+  // 7. op: 'add' (and 'update') targeting a new list name adds it to sync.lists immediately
+  const addNewListRes = await post(world, { op: 'add', text: '准备答辩PPT', list: '博士答辩' })
+  check(addNewListRes.payload.state.sync.lists.includes('博士答辩'), 'op: add with a new list name adds that list to sync.lists')
+  const moveNewListRes = await post(world, {
+    op: 'update',
+    id: addNewListRes.payload.state.items.find((i) => i.text === '准备答辩PPT').id,
+    patch: { list: '论文送审' },
+  })
+  check(moveNewListRes.payload.state.sync.lists.includes('论文送审'), 'op: update moving task to a new list adds that list to sync.lists')
+
+  // 8. Auto-discovery of new Apple Reminders lists + excludedLists respected + completedAt import
+  const autoFile = join(dir, 'auto-discover', 'todos.json')
+  const recentDoneTs = Date.now() - 2 * 86400_000
+  const ancientDoneTs = Date.now() - 60 * 86400_000
+  const mockReminders = new Map([
+    ['DSH 待办', { color: '#0A84FF', emblem: '📌', items: [] }],
+    ['博士答辩', {
+      color: '#FF9F0A',
+      emblem: '🎓',
+      items: [
+        { id: 'rem-1', name: '打印论文定稿', completed: false, due: '2026-12-15', notes: '一式五份', priority: 1, flagged: true },
+        { id: 'rem-recent', name: '提交答辩申请', completed: true, completedAt: recentDoneTs },
+        { id: 'rem-ancient', name: '2024开题归档', completed: true, completedAt: ancientDoneTs },
+      ],
+    }],
+  ])
+  let nextMockRemId = 100
+  const mockMirror = {
+    listNames: async () => [...mockReminders.keys()],
+    listDetails: async () => [...mockReminders.entries()].map(([name, v]) => ({
+      name,
+      color: v.color ?? '',
+      emblem: v.emblem ?? '',
+    })),
+    readLists: async (names, opts = {}) => names.map((name) => {
+      const entry = mockReminders.get(name)
+      if (!entry) return { name, exists: false, items: [] }
+      const items = entry.items.map((it) => {
+        const base = { id: it.id, name: it.name, completed: it.completed === true }
+        if (base.completed) base.completedAt = it.completedAt ?? null
+        if (opts.detailed) {
+          base.notes = it.notes ?? ''
+          base.due = it.due ?? null
+          base.dueTime = it.dueTime ?? null
+          base.flagged = it.flagged === true
+          base.priority = it.priority ?? 0
+        }
+        return base
+      })
+      return { name, exists: true, items }
+    }),
+    ensureLists: async (names) => {
+      for (const name of names) {
+        if (!mockReminders.has(name)) mockReminders.set(name, { color: '', emblem: '', items: [] })
+      }
+    },
+    createList: async (name, opts = {}) => {
+      if (!mockReminders.has(name)) {
+        mockReminders.set(name, { color: opts.color ?? '', emblem: opts.emblem ?? '', items: [] })
+      }
+      return true
+    },
+    updateListMirror: async () => true,
+    deleteList: async (name) => mockReminders.delete(name),
+    createReminder: async (listName, task) => {
+      if (!mockReminders.has(listName)) mockReminders.set(listName, { color: '', emblem: '', items: [] })
+      const rid = `rem-gen-${++nextMockRemId}`
+      mockReminders.get(listName).items.push({
+        id: rid,
+        name: task.text,
+        completed: task.done === true,
+        notes: task.notes ?? '',
+        due: task.due ?? null,
+        dueTime: task.dueTime ?? null,
+        flagged: task.flagged === true,
+        priority: task.priority ?? 0,
+      })
+      return rid
+    },
+    updateReminder: async (listName, rid, patch) => {
+      const entry = mockReminders.get(listName)
+      if (!entry) return false
+      const idx = entry.items.findIndex((x) => x.id === rid)
+      if (idx < 0) return false
+      const cur = entry.items[idx]
+      if (patch.due === null) {
+        const replacedId = `rem-rep-${++nextMockRemId}`
+        entry.items.splice(idx, 1, {
+          id: replacedId,
+          name: typeof patch.text === 'string' ? patch.text : cur.name,
+          completed: typeof patch.done === 'boolean' ? patch.done : cur.completed,
+          notes: typeof patch.notes === 'string' ? patch.notes : (cur.notes ?? ''),
+          due: null,
+          dueTime: null,
+          flagged: typeof patch.flagged === 'boolean' ? patch.flagged : (cur.flagged === true),
+          priority: typeof patch.priority === 'number' ? patch.priority : (cur.priority ?? 0),
+        })
+        return replacedId
+      }
+      if (typeof patch.text === 'string') cur.name = patch.text
+      if (typeof patch.done === 'boolean') cur.completed = patch.done
+      if (typeof patch.notes === 'string') cur.notes = patch.notes
+      if (typeof patch.due === 'string') cur.due = patch.due
+      if ('dueTime' in patch) cur.dueTime = patch.dueTime
+      if (typeof patch.flagged === 'boolean') cur.flagged = patch.flagged
+      if (typeof patch.priority === 'number') cur.priority = patch.priority
+      return true
+    },
+    deleteReminder: async (listName, rid) => {
+      const entry = mockReminders.get(listName)
+      if (!entry) return false
+      entry.items = entry.items.filter((x) => x.id !== rid)
+      return true
+    },
+    moveReminder: async () => true,
+  }
+
+  const autoWorld = fakeContext()
+  apply(autoWorld.ctx, { file: autoFile, mirror: mockMirror, syncIntervalMs: 3600000 })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  const synced1 = await post(autoWorld, { op: 'sync' })
+  equal(synced1.payload.state.sync.lists, ['DSH 待办', '博士答辩'], 'auto-discovery adds new Reminders list to sync.lists')
+  const discoveredMeta = synced1.payload.state.sync.listMeta.find((m) => m.name === '博士答辩')
+  equal([discoveredMeta?.color, discoveredMeta?.icon], ['#FF9F0A', '🎓'], 'auto-discovery fetches list color and icon')
+  const importedOpen = synced1.payload.state.items.find((i) => i.text === '打印论文定稿')
+  equal([importedOpen?.list, importedOpen?.due, importedOpen?.priority, importedOpen?.flagged], ['博士答辩', '2026-12-15', 1, true], 'auto-discovered list imports open tasks with full details')
+  const importedRecent = synced1.payload.state.items.find((i) => i.text === '提交答辩申请')
+  equal([importedRecent?.done, importedRecent?.doneAt], [true, recentDoneTs], 'recent <30d completed reminder imports with its original completedAt')
+  equal(synced1.payload.state.items.some((i) => i.text === '2024开题归档'), false, 'ancient >30d completed reminder is NOT imported into todos.json')
+
+  // Uncheck '博士答辩' via op: 'select' -> persisted in excludedLists and not re-discovered
+  await post(autoWorld, { op: 'select', lists: ['DSH 待办'] })
+  const diskAfterSelect = await loadState(autoFile)
+  equal(diskAfterSelect.settings.excludedLists, ['博士答辩'], 'unchecking a list in op: select saves it in settings.excludedLists')
+
+  // Add a third list '组会安排' in Reminders and sync again
+  mockReminders.set('组会安排', {
+    color: '#30D158',
+    emblem: '📅',
+    items: [{ id: 'rem-meet', name: '周三汇报', completed: false }],
+  })
+  const synced2 = await post(autoWorld, { op: 'sync' })
+  equal(
+    synced2.payload.state.sync.lists,
+    ['DSH 待办', '组会安排'],
+    'mergePass skips excludedLists ("博士答辩") while still auto-discovering brand-new lists ("组会安排")',
+  )
+
+  // Deleting a list locally without deleteReminders adds it to excludedLists so mergePass does not re-add it
+  await post(autoWorld, { op: 'delete_list', name: '组会安排' })
+  const synced3 = await post(autoWorld, { op: 'sync' })
+  equal(
+    synced3.payload.state.sync.lists,
+    ['DSH 待办'],
+    'delete_list without deleteReminders excludes the list from future auto-discovery',
+  )
+
+  // 9. Clearing due date (patch.due === null) replaces reminder in place, updates reminderId, and tombstones old id
+  const dueClearAdd = await post(autoWorld, {
+    op: 'add',
+    text: '待清除日期任务',
+    list: 'DSH 待办',
+    due: '2026-12-20',
+    dueTime: '14:00',
+    notes: '保留备注',
+  })
+  const dueClearTaskId = dueClearAdd.payload.state.items.find((i) => i.text === '待清除日期任务').id
+  await post(autoWorld, { op: 'sync' })
+  const diskBeforeClear = await loadState(autoFile)
+  const oldRemId = diskBeforeClear.items.find((i) => i.id === dueClearTaskId).reminderId
+  check(typeof oldRemId === 'string' && oldRemId.startsWith('rem-gen-'), 'dated task receives initial reminderId')
+
+  await post(autoWorld, { op: 'update', id: dueClearTaskId, patch: { due: '' } })
+  // Wait for debounced pushPass or run sync directly: test pushUpdate replacement + tombstone recording
+  await new Promise((resolve) => setTimeout(resolve, 750))
+  const diskAfterPushClear = await loadState(autoFile)
+  const itemAfterPushClear = diskAfterPushClear.items.find((i) => i.id === dueClearTaskId)
+  check(
+    typeof itemAfterPushClear.reminderId === 'string' && itemAfterPushClear.reminderId.startsWith('rem-rep-') && itemAfterPushClear.reminderId !== oldRemId,
+    'pushUpdate updates item.reminderId to replacement id when clearing due',
+  )
+  check(
+    diskAfterPushClear.tombstones.some((t) => t.reminderId === oldRemId),
+    'pushUpdate records replaced old reminderId in tombstones',
+  )
+  const syncedAfterClear = await post(autoWorld, { op: 'sync' })
+  const clearedView = syncedAfterClear.payload.state.items.find((i) => i.id === dueClearTaskId)
+  equal(
+    [clearedView.due, clearedView.dueTime, clearedView.notes],
+    [undefined, undefined, '保留备注'],
+    'cleared due stays undefined after sync while preserving notes',
+  )
+
+  // 10. Cross-process op: 'list' reload & .synclock serialization + stale lock breaking
+  const lockFile = join(dir, 'cross-proc-lock', 'todos.json')
+  let activeSyncPasses = 0
+  let maxConcurrentSyncPasses = 0
+  const lockMirror = {
+    ...mockMirror,
+    listNames: async () => ['DSH 待办'],
+    listDetails: async () => [{ name: 'DSH 待办', color: '#0A84FF', emblem: '📌' }],
+    readLists: async (names) => {
+      activeSyncPasses += 1
+      if (activeSyncPasses > maxConcurrentSyncPasses) maxConcurrentSyncPasses = activeSyncPasses
+      await new Promise((resolve) => setTimeout(resolve, 180))
+      activeSyncPasses -= 1
+      return names.map((name) => ({ name, exists: true, items: [] }))
+    },
+    createReminder: async (_listName, _task) => `rem-lock-${++nextMockRemId}`,
+    updateReminder: async () => true,
+    deleteReminder: async () => true,
+  }
+  const procA = fakeContext()
+  const procB = fakeContext()
+  apply(procA.ctx, { file: lockFile, lists: ['DSH 待办'], mirror: lockMirror, syncIntervalMs: 3600000 })
+  apply(procB.ctx, { file: lockFile, lists: ['DSH 待办'], mirror: lockMirror, syncIntervalMs: 3600000 })
+  await new Promise((resolve) => setTimeout(resolve, 30))
+
+  await post(procA, { op: 'add', text: '进程A任务' })
+  // Immediately query procB via op: 'list' before fs.watch debounce (120ms) fires
+  const procBList = await post(procB, { op: 'list' })
+  equal(
+    procBList.payload.state.items.map((i) => i.text),
+    ['进程A任务'],
+    'op: list reloads freshest disk state immediately across processes',
+  )
+
+  // Plant a stale (>90s) .synclock directory and run concurrent sync passes from procA and procB
+  const staleLockDir = `${lockFile}.synclock`
+  await mkdir(staleLockDir, { recursive: true })
+  const staleTime = new Date(Date.now() - 120_000)
+  await utimes(staleLockDir, staleTime, staleTime)
+
+  await post(procB, { op: 'add', text: '进程B任务' })
+  const [resSyncA, resSyncB] = await Promise.all([
+    post(procA, { op: 'sync' }),
+    post(procB, { op: 'sync' }),
+  ])
+  check(resSyncA.payload.ok === true && resSyncB.payload.ok === true, 'concurrent cross-process syncs both succeed after breaking stale lock')
+  equal(maxConcurrentSyncPasses, 1, '.synclock serializes concurrent sync passes across instances')
+  const finalLockDisk = await loadState(lockFile)
+  equal(
+    finalLockDisk.items.map((i) => i.text),
+    ['进程A任务', '进程B任务'],
+    'serialized cross-process syncs preserve items from both processes without clobbering',
+  )
+  let lockStillExists = true
+  try {
+    await stat(staleLockDir)
+  } catch {
+    lockStillExists = false
+  }
+  equal(lockStillExists, false, '.synclock directory is cleaned up after sync passes complete')
+
   return world
 }
 
@@ -582,14 +898,19 @@ async function liveChecks(dir) {
   apply(world.ctx, { file, reminders: true, lists: [listA, listB], syncIntervalMs: 3600000, raceWindowMs: 0 })
   await new Promise((resolve) => setTimeout(resolve, 50))
 
-  // Details travel DSH → Reminders.
+  // Details travel DSH → Reminders (including all-day due date without fabricating 00:00 dueTime).
   const added = await post(world, {
     op: 'add', text: '带细节的任务', due: '2026-12-24', notes: 'DSH 备注', priority: 9, flagged: true,
   })
   const id = added.payload.state.items[0].id
-  await post(world, { op: 'sync' })
+  const firstSynced = await post(world, { op: 'sync' })
   const [first] = await mirrorOf(listA)
-  equal([first.name, first.due, first.notes, first.priority, first.flagged], ['带细节的任务', '2026-12-24', 'DSH 备注', 9, true], 'details reach the mirror')
+  equal(
+    [first.name, first.due, first.dueTime, first.notes, first.priority, first.flagged],
+    ['带细节的任务', '2026-12-24', null, 'DSH 备注', 9, true],
+    'all-day details reach the mirror without fabricating dueTime',
+  )
+  equal(firstSynced.payload.state.items[0].dueTime, undefined, 'all-day reminder keeps dueTime undefined in DSH')
 
   // Details travel Reminders → DSH.
   await touchMirror(listA, `
@@ -654,6 +975,79 @@ async function liveChecks(dir) {
   `)
   const pulledMove = await post(world, { op: 'sync' })
   equal(pulledMove.payload.state.items.find((item) => item.id === moverId).list, listA, 'a phone move changes the task list here')
+
+  // Regression: adding an open timed task into a list that ALREADY contains a completed reminder
+  // must NOT overwrite the completed reminder or orphan a duplicate, and clearing due: '' must stick.
+  await post(world, { op: 'remove', id: moverId })
+  await post(world, { op: 'sync' })
+  equal((await mirrorOf(listA)).length, 0, 'list A is empty before completed+open regression check')
+
+  const doneFirst = await post(world, {
+    op: 'add',
+    text: '和李东东说235续费问题',
+    list: listA,
+    done: true,
+    notes: '已完成旧备注',
+  })
+  const doneFirstId = doneFirst.payload.state.items.find((item) => item.text === '和李东东说235续费问题').id
+  await post(world, { op: 'sync' })
+
+  const openSecond = await post(world, {
+    op: 'add',
+    text: '新增待办测试',
+    list: listA,
+    due: '2026-11-21',
+    dueTime: '15:00',
+    notes: '新任务备注',
+  })
+  const openSecondId = openSecond.payload.state.items.find((item) => item.text === '新增待办测试').id
+  await post(world, { op: 'sync' })
+  const regSynced = await post(world, { op: 'sync' })
+
+  const doneRowAfter = regSynced.payload.state.items.find((item) => item.id === doneFirstId)
+  const openRowAfter = regSynced.payload.state.items.find((item) => item.id === openSecondId)
+  equal(
+    [doneRowAfter?.text, doneRowAfter?.done, doneRowAfter?.due, doneRowAfter?.dueTime, doneRowAfter?.notes],
+    ['和李东东说235续费问题', true, undefined, undefined, '已完成旧备注'],
+    'existing completed task in listA is NOT overwritten when adding a new open task',
+  )
+  equal(
+    [openRowAfter?.text, openRowAfter?.done, openRowAfter?.due, openRowAfter?.dueTime, openRowAfter?.notes],
+    ['新增待办测试', false, '2026-11-21', '15:00', '新任务备注'],
+    'new open task in listA keeps its exact due, dueTime, and notes',
+  )
+  const mirrorItemsA = await mirrorOf(listA)
+  equal(mirrorItemsA.length, 2, 'listA has exact 2 reminders without orphaned duplicates')
+  const mirrorDone = mirrorItemsA.find((entry) => entry.name === '和李东东说235续费问题')
+  const mirrorOpen = mirrorItemsA.find((entry) => entry.name === '新增待办测试')
+  equal(
+    [mirrorDone?.completed, mirrorDone?.due, mirrorDone?.notes],
+    [true, null, '已完成旧备注'],
+    'completed reminder in Apple Reminders kept its own completed state, null due, and notes',
+  )
+  equal(
+    [mirrorOpen?.completed, mirrorOpen?.due, mirrorOpen?.dueTime, mirrorOpen?.notes],
+    [false, '2026-11-21', '15:00', '新任务备注'],
+    'open reminder in Apple Reminders received its exact due, dueTime, and notes',
+  )
+
+  // Clearing due: '' on that task replaces in place and keeps due undefined across syncs.
+  await post(world, { op: 'update', id: openSecondId, patch: { due: '' } })
+  await post(world, { op: 'sync' })
+  const afterDueCleared = await post(world, { op: 'sync' })
+  const openClearedRow = afterDueCleared.payload.state.items.find((item) => item.id === openSecondId)
+  equal(
+    [openClearedRow?.due, openClearedRow?.dueTime, openClearedRow?.notes],
+    [undefined, undefined, '新任务备注'],
+    'clearing due: "" keeps due and dueTime undefined after live Apple Reminders sync',
+  )
+  const mirrorAfterClear = await mirrorOf(listA)
+  const mirrorOpenCleared = mirrorAfterClear.find((entry) => entry.name === '新增待办测试')
+  equal(
+    [mirrorAfterClear.length, mirrorOpenCleared?.due, mirrorOpenCleared?.dueTime, mirrorOpenCleared?.notes],
+    [2, null, null, '新任务备注'],
+    'Apple Reminders mirror cleared due/dueTime cleanly via replace-in-place without leaving duplicates',
+  )
 
   await dropList(listA)
   await dropList(listB)

@@ -13,7 +13,9 @@
  *
  * @module dsh-apple-reminders
  */
-import { existsSync } from 'node:fs'
+import { existsSync, watch } from 'node:fs'
+import { mkdir, rm, stat } from 'node:fs/promises'
+import { basename, dirname } from 'node:path'
 
 import {
   createList,
@@ -22,6 +24,7 @@ import {
   deleteReminder,
   ensureLists,
   listDetails,
+  listNames,
   moveReminder,
   readLists,
   remindersAvailable,
@@ -59,6 +62,10 @@ const PUSH_DEBOUNCE_MS = 600
 const FRESH_MERGE_MS = 60000
 /** One pass creates at most this many reminders, so a big import stays responsive. */
 const MAX_CREATES_PER_PASS = 20
+/** Cross-process sync lock polling step, max wait, and stale-lock horizon. */
+const SYNC_LOCK_POLL_MS = 150
+const SYNC_LOCK_WAIT_MS = 15000
+const SYNC_LOCK_STALE_MS = 90000
 /** Fields the panel or tool may set on one task. */
 const PATCHABLE = [
   'text',
@@ -139,10 +146,28 @@ function toTrashEntry(item, listName, now) {
  * @param {number} [config.raceWindowMs] - how long a freshly pushed reminder is exempt from being read as deleted.
  */
 export function apply(ctx, config = {}) {
+  const hasCustomMirror = config.mirror !== null && typeof config.mirror === 'object'
+  const mirror = {
+    createList,
+    createReminder,
+    deleteList,
+    deleteReminder,
+    ensureLists,
+    listDetails,
+    listNames,
+    moveReminder,
+    readLists,
+    updateListMirror,
+    updateReminder,
+    ...(hasCustomMirror ? config.mirror : {}),
+  }
+  const autoDiscoverLists = config.autoDiscoverLists !== undefined
+    ? config.autoDiscoverLists === true
+    : (!Array.isArray(config.lists) && typeof config.listName !== 'string')
   const settings = {
     file: typeof config.file === 'string' && config.file.trim() !== '' ? config.file : defaultFilePath(),
     lists: readListNames(config),
-    reminders: config.reminders !== false && remindersAvailable(),
+    reminders: config.reminders !== false && (hasCustomMirror || remindersAvailable()),
     syncIntervalMs: Number.isFinite(config.syncIntervalMs) && config.syncIntervalMs > 0
       ? config.syncIntervalMs : DEFAULT_SYNC_INTERVAL_MS,
     raceWindowMs: Number.isFinite(config.raceWindowMs) && config.raceWindowMs >= 0
@@ -209,7 +234,7 @@ export function apply(ctx, config = {}) {
       return
     }
     try {
-      const details = await listDetails()
+      const details = await mirror.listDetails()
       availableLists = details.map((entry) => entry.name)
       const nextColors = { ...(colourByName ?? {}) }
       const nextEmblems = { ...(emblemByName ?? {}) }
@@ -329,7 +354,43 @@ export function apply(ctx, config = {}) {
     for (const write of panels) write(data)
   }
 
-  store.subscribe(() => { publish() })
+  let fileWatcher = null
+  let watchDebounce = null
+  let disposed = false
+  const targetDir = dirname(settings.file)
+  const targetBase = basename(settings.file)
+
+  /** Watch `dirname(settings.file)` so writes from other processes reload into `store`. */
+  function startFileWatcher() {
+    if (disposed || fileWatcher !== null) return
+    try {
+      fileWatcher = watch(targetDir, (_eventType, filename) => {
+        if (filename !== null && filename !== undefined && filename !== '' && String(filename) !== targetBase) return
+        if (watchDebounce !== null) clearTimeout(watchDebounce)
+        watchDebounce = setTimeout(() => {
+          watchDebounce = null
+          if (!disposed) void store.reloadIfChanged().catch(() => {})
+        }, 120)
+        watchDebounce.unref?.()
+      })
+      fileWatcher.on?.('error', () => {
+        try {
+          fileWatcher?.close()
+        } catch {}
+        fileWatcher = null
+      })
+      fileWatcher.unref?.()
+    } catch {
+      fileWatcher = null
+    }
+  }
+
+  void ready.then(() => { startFileWatcher() }, () => {})
+
+  store.subscribe(() => {
+    startFileWatcher()
+    publish()
+  })
 
   /**
    * @param {'idle'|'syncing'|'error'} status - new mirror state.
@@ -358,7 +419,7 @@ export function apply(ctx, config = {}) {
   /** Delete the reminders of tasks that left the list, then forget them. */
   async function flushTombstones() {
     for (const entry of store.get().tombstones) {
-      await deleteReminder(entry.list ?? chosenLists()[0], entry.reminderId)
+      await mirror.deleteReminder(entry.list ?? chosenLists()[0], entry.reminderId)
       await store.commit((draft) => {
         draft.tombstones = draft.tombstones.filter((candidate) => candidate.reminderId !== entry.reminderId)
       })
@@ -380,7 +441,7 @@ export function apply(ctx, config = {}) {
    * @param {{itemId: string, list: string, task: object}} entry - planned task.
    */
   async function createMirror(entry) {
-    const reminderId = await createReminder(entry.list, mirrorProps(entry.task))
+    const reminderId = await mirror.createReminder(entry.list, mirrorProps(entry.task))
     const state = await store.commit((draft) => {
       const item = draft.items.find((candidate) => candidate.id === entry.itemId)
       if (item === undefined) return
@@ -393,7 +454,7 @@ export function apply(ctx, config = {}) {
     // reminder would come back as a new task on the next pass.
     const item = state.items.find((candidate) => candidate.id === entry.itemId)
     if (item === undefined || item.reminderId !== reminderId) {
-      await deleteReminder(entry.list, reminderId).catch(() => {})
+      await mirror.deleteReminder(entry.list, reminderId).catch(() => {})
     }
   }
 
@@ -403,6 +464,7 @@ export function apply(ctx, config = {}) {
    */
   async function pushUpdate(entry) {
     const current = store.get().items.find((candidate) => candidate.id === entry.itemId)
+    const targetList = current !== undefined ? listOf(current) : entry.list
     const props = {}
     for (const [field, value] of Object.entries(entry.patch)) props[field] = toMirror(field, value)
     if ('due' in entry.patch || 'dueTime' in entry.patch) {
@@ -413,8 +475,9 @@ export function apply(ctx, config = {}) {
       props.due = toMirror('due', effectiveDue)
       props.dueTime = toMirror('dueTime', effectiveDueTime)
     }
-    const found = await updateReminder(entry.list, entry.reminderId, props)
-    await store.commit((draft) => {
+    const found = await mirror.updateReminder(targetList, entry.reminderId, props)
+    const replacedId = typeof found === 'string' && found !== '' && found !== entry.reminderId ? found : null
+    const state = await store.commit((draft) => {
       const item = draft.items.find((candidate) => candidate.id === entry.itemId)
       if (item === undefined || item.reminderId !== entry.reminderId) return
       if (!found) {
@@ -423,7 +486,14 @@ export function apply(ctx, config = {}) {
         delete item.synced
         return
       }
-      item.pushedAt = Date.now()
+      const now = Date.now()
+      if (replacedId !== null) {
+        if (!draft.tombstones.some((candidate) => candidate.reminderId === entry.reminderId)) {
+          draft.tombstones.push({ reminderId: entry.reminderId, list: targetList, at: now })
+        }
+        item.reminderId = replacedId
+      }
+      item.pushedAt = now
       if (item.synced === undefined) return
       for (const [field, value] of Object.entries(entry.patch)) {
         if (value === undefined) delete item.synced[field]
@@ -433,6 +503,12 @@ export function apply(ctx, config = {}) {
         delete item.synced.dueTime
       }
     })
+    if (replacedId !== null) {
+      const item = state.items.find((candidate) => candidate.id === entry.itemId)
+      if (item === undefined || item.reminderId !== replacedId) {
+        await mirror.deleteReminder(targetList, replacedId).catch(() => {})
+      }
+    }
   }
 
   /**
@@ -458,6 +534,9 @@ export function apply(ctx, config = {}) {
     await store.commit((draft) => {
       if (draft.items.some((item) => item.reminderId === entry.reminderId)) return
       const now = Date.now()
+      const synced = { ...entry.task, done: entry.task.done === true, list: entry.list }
+      delete synced.id
+      delete synced.completedAt
       const item = {
         id: newId(),
         text: entry.task.text,
@@ -465,9 +544,11 @@ export function apply(ctx, config = {}) {
         createdAt: now,
         list: entry.list,
         reminderId: entry.reminderId,
-        synced: { ...entry.task, done: entry.task.done === true, list: entry.list },
+        synced,
       }
-      if (item.done) item.doneAt = now
+      if (item.done) {
+        item.doneAt = Number.isFinite(entry.task.completedAt) ? entry.task.completedAt : now
+      }
       for (const field of ['notes', 'due', 'dueTime', 'flagged', 'priority']) {
         if (entry.task[field] !== undefined) item[field] = entry.task[field]
       }
@@ -481,7 +562,7 @@ export function apply(ctx, config = {}) {
    * @param {{itemId: string, list: string, reminderId: string}} entry - a completed task old enough to stop mirroring.
    */
   async function pruneItem(entry) {
-    await deleteReminder(entry.list, entry.reminderId).catch(() => {})
+    await mirror.deleteReminder(entry.list, entry.reminderId).catch(() => {})
     await store.commit((draft) => {
       const item = draft.items.find((candidate) => candidate.id === entry.itemId)
       if (item === undefined || item.reminderId !== entry.reminderId) return
@@ -495,7 +576,7 @@ export function apply(ctx, config = {}) {
    * @param {{itemId: string, reminderId: string, from: string, to: string}} entry - a task that changed list.
    */
   async function moveEntry(entry) {
-    const found = await moveReminder(entry.from, entry.reminderId, entry.to)
+    const found = await mirror.moveReminder(entry.from, entry.reminderId, entry.to)
     await store.commit((draft) => {
       const item = draft.items.find((candidate) => candidate.id === entry.itemId)
       if (item === undefined || item.reminderId !== entry.reminderId) return
@@ -555,7 +636,7 @@ export function apply(ctx, config = {}) {
    */
   async function runPlan(plan) {
     for (const entry of plan.dropReminders ?? []) {
-      await deleteReminder(entry.list, entry.reminderId)
+      await mirror.deleteReminder(entry.list, entry.reminderId)
       await store.commit((draft) => {
         draft.tombstones = draft.tombstones.filter((candidate) => candidate.reminderId !== entry.reminderId)
       })
@@ -583,14 +664,61 @@ export function apply(ctx, config = {}) {
     })
   }
 
+  const syncLockDir = `${settings.file}.synclock`
+
+  /**
+   * Serialize Apple Reminders sync passes across processes (DSH, Sidecar, MCP)
+   * using an atomic directory lock beside `todos.json`.
+   * @template T
+   * @param {() => Promise<T>} fn - critical section.
+   * @returns {Promise<T>} result of `fn`.
+   */
+  async function withSyncLock(fn) {
+    await mkdir(dirname(syncLockDir), { recursive: true, mode: 0o700 })
+    const deadline = Date.now() + SYNC_LOCK_WAIT_MS
+    let acquired = false
+    while (!acquired) {
+      try {
+        await mkdir(syncLockDir, { mode: 0o700 })
+        acquired = true
+        break
+      } catch (error) {
+        if (error?.code !== 'EEXIST') throw error
+        try {
+          const info = await stat(syncLockDir)
+          if (Number.isFinite(info.mtimeMs) && Date.now() - info.mtimeMs > SYNC_LOCK_STALE_MS) {
+            await rm(syncLockDir, { recursive: true, force: true }).catch(() => {})
+            continue
+          }
+        } catch {
+          continue
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(`Timed out waiting for sync lock ${syncLockDir}`)
+        }
+        await new Promise((resolve) => setTimeout(resolve, SYNC_LOCK_POLL_MS))
+      }
+    }
+    try {
+      return await fn()
+    } finally {
+      if (acquired) {
+        await rm(syncLockDir, { recursive: true, force: true }).catch(() => {})
+      }
+    }
+  }
+
   /** Push local edits and deletions; no mirror read, so a click stays fast. */
   async function pushPass() {
     await ready
     if (!settings.reminders) return
     setStatus('syncing')
     try {
-      await flushTombstones()
-      await runPlan(planPush(store.get().items, { listOf }))
+      await withSyncLock(async () => {
+        await store.reloadIfChanged()
+        await flushTombstones()
+        await runPlan(planPush(store.get().items, { listOf }))
+      })
       setStatus('idle')
     } catch (error) {
       setStatus('error', messageOf(error))
@@ -607,21 +735,53 @@ export function apply(ctx, config = {}) {
     if (!settings.reminders) return
     setStatus('syncing')
     try {
-      await flushTombstones()
-      const names = readNames()
-      const lists = await readLists(names, { detailed })
-      // List metadata (names, colours, emblems) changes rarely; refresh on detailed pass.
-      if (detailed) await refreshAvailableLists()
-      // An empty mirror is still worth creating: it is how the user sees that
-      // the sync exists at all.
-      const missing = lists.filter((list) => !list.exists).map((list) => list.name)
-      if (missing.length > 0) await ensureLists(missing)
-      await runPlan(planMerge(store.get().items, lists, store.get().tombstones, {
-        fields: detailed ? FIELDS : CHEAP_FIELDS,
-        listOf,
-        ...(settings.raceWindowMs === undefined ? {} : { raceMs: settings.raceWindowMs }),
-      }))
-      setStatus('idle', null, detailed)
+      let stampedDetailed = detailed
+      await withSyncLock(async () => {
+        await store.reloadIfChanged()
+        await flushTombstones()
+        let refreshedDetails = false
+        if (autoDiscoverLists) {
+          const currentNames = detailed
+            ? (await refreshAvailableLists(), (refreshedDetails = true), availableLists ?? [])
+            : await mirror.listNames().catch(() => availableLists ?? [])
+          const currentChosen = chosenLists()
+          const excluded = new Set(store.get().settings?.excludedLists ?? [])
+          const newLists = currentNames.filter((name) => !currentChosen.includes(name) && !excluded.has(name))
+          if (newLists.length > 0) {
+            if (!detailed) {
+              await refreshAvailableLists()
+              refreshedDetails = true
+              detailed = true
+              stampedDetailed = true
+            }
+            await store.commit((draft) => {
+              const base = Array.isArray(draft.settings?.lists) && draft.settings.lists.length > 0
+                ? draft.settings.lists
+                : settings.lists
+              draft.settings.lists = [...new Set([...base, ...newLists])]
+            })
+          }
+        }
+        const names = readNames()
+        const lists = await mirror.readLists(names, { detailed })
+        // List metadata (names, colours, emblems) changes rarely; refresh on detailed pass.
+        if (detailed && !refreshedDetails) await refreshAvailableLists()
+        // An empty mirror is still worth creating: it is how the user sees that
+        // the sync exists at all.
+        const missing = lists.filter((list) => !list.exists).map((list) => list.name)
+        if (missing.length > 0) {
+          await mirror.ensureLists(missing)
+          if (Array.isArray(availableLists)) {
+            availableLists = [...new Set([...availableLists, ...missing])]
+          }
+        }
+        await runPlan(planMerge(store.get().items, lists, store.get().tombstones, {
+          fields: detailed ? FIELDS : CHEAP_FIELDS,
+          listOf,
+          ...(settings.raceWindowMs === undefined ? {} : { raceMs: settings.raceWindowMs }),
+        }))
+      })
+      setStatus('idle', null, stampedDetailed)
     } catch (error) {
       setStatus('error', messageOf(error))
       log.warn?.(`dsh-apple-reminders: Apple Reminders merge failed: ${messageOf(error)}`)
@@ -746,6 +906,23 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  /** Ensure an explicitly targeted or newly created list is tracked in `draft.settings.lists` and un-excluded. */
+  function includeListInSettings(draft, listName) {
+    if (typeof listName !== 'string' || listName.trim() === '') return
+    const target = listName.trim()
+    draft.settings = { ...draft.settings }
+    const hasStoredLists = Array.isArray(draft.settings.lists) && draft.settings.lists.length > 0
+    const current = hasStoredLists ? draft.settings.lists : settings.lists
+    if (!current.includes(target) && (hasStoredLists || target !== settings.lists[0])) {
+      draft.settings.lists = [...current, target]
+    }
+    if (Array.isArray(draft.settings.excludedLists)) {
+      const nextExcluded = draft.settings.excludedLists.filter((entry) => entry !== target)
+      if (nextExcluded.length > 0) draft.settings.excludedLists = nextExcluded
+      else delete draft.settings.excludedLists
+    }
+  }
+
   /**
    * Run one panel or model operation.
    * @param {object} op - `{op, ...}`.
@@ -757,6 +934,7 @@ export function apply(ctx, config = {}) {
     const kind = typeof op.op === 'string' ? op.op : 'list'
     switch (kind) {
       case 'list':
+        await store.reloadIfChanged()
         return snapshot(viewOptions)
       case 'add': {
         const text = String(op.text ?? '').trim()
@@ -778,6 +956,7 @@ export function apply(ctx, config = {}) {
             item.section = parent.section
           }
           applyPatch(op, item)
+          includeListInSettings(draft, item.list)
           draft.items.push(item)
         })
         schedulePush()
@@ -813,6 +992,9 @@ export function apply(ctx, config = {}) {
           if (item === undefined) return
           const wasDone = item.done === true
           applyPatch(patch, item)
+          if (typeof patch.list === 'string' && patch.list.trim() !== '') {
+            includeListInSettings(draft, item.list)
+          }
           if (!wasDone && item.done === true && item.repeat !== undefined && REPEAT_VALUES.has(item.repeat)) {
             const now = Date.now()
             const nextTask = buildNextRepeatOccurrence(item, now)
@@ -975,6 +1157,7 @@ export function apply(ctx, config = {}) {
         return snapshot(viewOptions)
       }
       case 'lists':
+        await store.reloadIfChanged()
         await refreshAvailableLists()
         return snapshot(viewOptions)
       case 'select': {
@@ -983,10 +1166,25 @@ export function apply(ctx, config = {}) {
             .filter((name) => typeof name === 'string' && name.trim() !== '')
             .map((name) => name.trim()))]
           : []
+        if (settings.reminders && availableLists === null) {
+          await refreshAvailableLists()
+        }
         await store.commit((draft) => {
+          const currentChosen = Array.isArray(draft.settings?.lists) && draft.settings.lists.length > 0
+            ? draft.settings.lists
+            : settings.lists
+          const knownPool = [...new Set([
+            ...(availableLists ?? []),
+            ...currentChosen,
+            ...(Array.isArray(draft.settings?.excludedLists) ? draft.settings.excludedLists : []),
+          ])]
+          const effectiveWanted = wanted.length > 0 ? wanted : settings.lists
+          const excludedLists = knownPool.filter((name) => !effectiveWanted.includes(name))
           draft.settings = { ...draft.settings }
           if (wanted.length === 0) delete draft.settings.lists
           else draft.settings.lists = wanted
+          if (excludedLists.length > 0) draft.settings.excludedLists = excludedLists
+          else delete draft.settings.excludedLists
         })
         await refreshAvailableLists()
         schedulePush()
@@ -1007,6 +1205,11 @@ export function apply(ctx, config = {}) {
             ? draft.settings.lists
             : settings.lists
           draft.settings.lists = [...new Set([...current, name])]
+          if (Array.isArray(draft.settings.excludedLists)) {
+            const nextExcluded = draft.settings.excludedLists.filter((entry) => entry !== name)
+            if (nextExcluded.length > 0) draft.settings.excludedLists = nextExcluded
+            else delete draft.settings.excludedLists
+          }
           draft.settings.listMeta = { ...(draft.settings.listMeta ?? {}) }
           const meta = { ...(draft.settings.listMeta[name] ?? {}) }
           if (color !== undefined) meta.color = color
@@ -1021,7 +1224,7 @@ export function apply(ctx, config = {}) {
         if (color !== undefined) colourByName = { ...(colourByName ?? {}), [name]: color }
         if (icon !== undefined) emblemByName = { ...(emblemByName ?? {}), [name]: icon }
         if (settings.reminders) {
-          await createList(name, { color, emblem: icon }).catch((error) => {
+          await mirror.createList(name, { color, emblem: icon }).catch((error) => {
             log.warn?.(`dsh-apple-reminders: createList("${name}") failed: ${messageOf(error)}`)
           })
         }
@@ -1041,6 +1244,11 @@ export function apply(ctx, config = {}) {
             const updatedLists = current.map((entry) => (entry === name ? nextName : entry))
             if (!updatedLists.includes(nextName)) updatedLists.push(nextName)
             draft.settings.lists = [...new Set(updatedLists)]
+            if (Array.isArray(draft.settings.excludedLists)) {
+              const nextExcluded = draft.settings.excludedLists.filter((entry) => entry !== nextName)
+              if (nextExcluded.length > 0) draft.settings.excludedLists = nextExcluded
+              else delete draft.settings.excludedLists
+            }
             for (const item of draft.items) {
               const eff = typeof item.list === 'string' && item.list !== '' ? item.list : defaultBefore
               if (eff === name) {
@@ -1117,7 +1325,7 @@ export function apply(ctx, config = {}) {
           if (typeof op.color === 'string' && op.color.trim() !== '') colourByName[nextName] = op.color.trim()
         }
         if (settings.reminders && (renamed || op.color !== undefined || op.icon !== undefined)) {
-          await updateListMirror(name, {
+          await mirror.updateListMirror(name, {
             newName: renamed ? nextName : undefined,
             color: typeof op.color === 'string' ? op.color : undefined,
             emblem: typeof op.icon === 'string' ? op.icon : undefined,
@@ -1141,6 +1349,12 @@ export function apply(ctx, config = {}) {
           const remainingLists = current.filter((entry) => entry !== name)
           const fallback = remainingLists[0] ?? (settings.lists[0] !== name ? settings.lists[0] : DEFAULT_LIST_NAME)
           draft.settings.lists = remainingLists.length > 0 ? remainingLists : [fallback]
+          const prevExcluded = Array.isArray(draft.settings.excludedLists) ? draft.settings.excludedLists : []
+          const nextExcluded = deleteInReminders
+            ? prevExcluded.filter((entry) => entry !== name)
+            : [...new Set([...prevExcluded, name])]
+          if (nextExcluded.length > 0) draft.settings.excludedLists = nextExcluded
+          else delete draft.settings.excludedLists
           if (draft.settings.listMeta !== undefined) {
             delete draft.settings.listMeta[name]
             if (Object.keys(draft.settings.listMeta).length === 0) delete draft.settings.listMeta
@@ -1165,7 +1379,7 @@ export function apply(ctx, config = {}) {
           availableLists = availableLists.filter((entry) => entry !== name)
         }
         if (settings.reminders && deleteInReminders) {
-          await deleteList(name).catch((error) => {
+          await mirror.deleteList(name).catch((error) => {
             log.warn?.(`dsh-apple-reminders: deleteList("${name}") failed: ${messageOf(error)}`)
           })
         } else if (queuedTombstones) {
@@ -1426,8 +1640,16 @@ export function apply(ctx, config = {}) {
   }
 
   ctx.effect(() => () => {
+    disposed = true
     if (debounce !== null) clearTimeout(debounce)
+    if (watchDebounce !== null) clearTimeout(watchDebounce)
     if (interval !== null) clearInterval(interval)
+    if (fileWatcher !== null) {
+      try {
+        fileWatcher.close()
+      } catch {}
+      fileWatcher = null
+    }
     panels.clear()
   }, 'dsh-apple-reminders: timers')
 }

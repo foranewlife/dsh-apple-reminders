@@ -249,7 +249,9 @@ app.api(
         triggerBackgroundSync(ctrl);
       }
 
-      const etag = `${diskMtime}:${state.rev}:${state.sync?.status}:${state.sync?.lastSyncAt || 0}`;
+      const syncListsKey = (state.sync?.lists ?? []).join(',');
+      const availableListsKey = (state.sync?.available ?? []).join(',');
+      const etag = `${diskMtime}:${state.rev}:${state.sync?.status}:${state.sync?.lastSyncAt || 0}:${syncListsKey}:${availableListsKey}`;
       if (data?.etag && data.etag === etag) {
         return { unchanged: true, etag };
       }

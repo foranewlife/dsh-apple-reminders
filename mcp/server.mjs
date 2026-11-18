@@ -120,7 +120,7 @@ async function handleMessage(msg) {
     sendResult(msg.id, {
       protocolVersion,
       capabilities: { tools: {} },
-      serverInfo: { name: 'apple-reminders', version: '2.2.0' },
+      serverInfo: { name: 'apple-reminders', version: '2.2.1' },
     })
     return
   }

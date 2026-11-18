@@ -2,7 +2,7 @@
   "name": "apple-reminders",
   "displayName": "Apple Reminders",
   "description": "Apple Reminders side-pane UI, two-way macOS Reminders sync, and personal_todos MCP tool (works in Antigravity and DeepSeek Harness).",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "author": "foranewlife",
   "homepage": "https://github.com/foranewlife/dsh-apple-reminders#readme",
   "repository": {
