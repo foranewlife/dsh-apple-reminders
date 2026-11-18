@@ -427,5 +427,20 @@ const closedAside = findNode(closedTree, (n) => n.type === 'aside')
 check(String(closedAside?.props?.className ?? '').includes('ar-sidebar--closed'), 'sidebarOpen=false renders .ar-sidebar--closed')
 check(closedAside?.props?.['aria-hidden'] === true, 'sidebarOpen=false sets aria-hidden=true on <aside>')
 
+// Theme-aware smart card & pinned card classes and CSS variables
+includes(cssText, '--ar-tile-today: radial-gradient(', 'CSS defines --ar-tile-today radial gradient')
+includes(cssText, '.ar-smart-card--today { background: var(--ar-tile-today); }', 'CSS maps .ar-smart-card--today to --ar-tile-today')
+includes(cssText, '.ar-smart-card--pinned {', 'CSS defines .ar-smart-card--pinned')
+includes(cssText, '.ar-root[data-ar-theme="light"]', 'CSS defines .ar-root[data-ar-theme="light"] theme rule')
+includes(cssText, ':not([data-ar-theme="dark"])', 'CSS guards light theme overrides with :not([data-ar-theme="dark"])')
+
+const todayCard = findNode(loadedTree, (n) => n.type === 'button' && String(n.props?.className ?? '').includes('ar-smart-card--today'))
+check(Boolean(todayCard), 'renders .ar-smart-card--today button')
+check(todayCard?.props?.style?.background === undefined, 'smart card does not hardcode inline style.background')
+
+const pinnedCard = findNode(loadedTree, (n) => n.type === 'button' && String(n.props?.className ?? '').includes('ar-smart-card--pinned'))
+check(Boolean(pinnedCard), 'renders .ar-smart-card--pinned button for pinned list')
+check(pinnedCard?.props?.style?.['--ar-pin-hex'] === '#E5594F', 'pinned card passes --ar-pin-hex CSS variable')
+
 console.log(failures === 0 ? '\nall render checks passed' : `\n${failures} render check(s) failed`)
 process.exit(failures === 0 ? 0 : 1)

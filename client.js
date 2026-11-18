@@ -366,31 +366,33 @@ window.__ModuleLoader__.load({
     function TodayCalendarIcon(props = {}) {
       const day = props.day != null ? String(props.day) : String(new Date().getDate())
       return h('svg', svgProps(props, 20, '0 0 20 20'),
-        h('rect', { x: 2.5, y: 3.5, width: 15, height: 14, rx: 3.2, fill: 'none', stroke: 'currentColor', strokeWidth: 1.6 }),
-        h('path', { d: 'M2.5 7.6h15M6.5 2v2.6M13.5 2v2.6', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round' }),
+        h('rect', { x: 2.5, y: 3, width: 15, height: 14, rx: 3.2, fill: 'none', stroke: 'currentColor', strokeWidth: 1.6 }),
+        h('path', { d: 'M2.5 6.2a3.2 3.2 0 0 1 3.2-3.2h8.6a3.2 3.2 0 0 1 3.2 3.2v1h-15v-1Z', fill: 'currentColor' }),
         h('text', {
-          x: 10, y: 14.5, textAnchor: 'middle', fill: 'currentColor',
-          fontSize: day.length > 1 ? 7.2 : 8, fontWeight: 700,
+          x: 10, y: 14.4, textAnchor: 'middle', fill: 'currentColor',
+          fontSize: day.length > 1 ? 7.4 : 8, fontWeight: 700,
           fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
         }, day))
     }
 
     function ScheduledIcon(props = {}) {
       return h('svg', svgProps(props, 20, '0 0 20 20'),
-        h('rect', { x: 2.5, y: 3.5, width: 15, height: 14, rx: 3.2, fill: 'none', stroke: 'currentColor', strokeWidth: 1.6 }),
-        h('path', { d: 'M2.5 7.6h15M6.5 2v2.6M13.5 2v2.6', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round' }),
-        h('circle', { cx: 6.5, cy: 10.7, r: 0.95, fill: 'currentColor' }),
-        h('circle', { cx: 10, cy: 10.7, r: 0.95, fill: 'currentColor' }),
-        h('circle', { cx: 13.5, cy: 10.7, r: 0.95, fill: 'currentColor' }),
-        h('circle', { cx: 6.5, cy: 13.9, r: 0.95, fill: 'currentColor' }),
-        h('circle', { cx: 10, cy: 13.9, r: 0.95, fill: 'currentColor' }),
-        h('circle', { cx: 13.5, cy: 13.9, r: 0.95, fill: 'currentColor' }))
+        h('rect', { x: 2.5, y: 3, width: 15, height: 14, rx: 3.2, fill: 'none', stroke: 'currentColor', strokeWidth: 1.6 }),
+        h('path', { d: 'M2.5 6.2a3.2 3.2 0 0 1 3.2-3.2h8.6a3.2 3.2 0 0 1 3.2 3.2v1h-15v-1Z', fill: 'currentColor' }),
+        h('circle', { cx: 5.5, cy: 10.3, r: 0.9, fill: 'currentColor' }),
+        h('circle', { cx: 8.5, cy: 10.3, r: 0.9, fill: 'currentColor' }),
+        h('circle', { cx: 11.5, cy: 10.3, r: 0.9, fill: 'currentColor' }),
+        h('circle', { cx: 14.5, cy: 10.3, r: 0.9, fill: 'currentColor' }),
+        h('circle', { cx: 5.5, cy: 13.5, r: 0.9, fill: 'currentColor' }),
+        h('circle', { cx: 8.5, cy: 13.5, r: 0.9, fill: 'currentColor' }),
+        h('circle', { cx: 11.5, cy: 13.5, r: 0.9, fill: 'currentColor' }),
+        h('circle', { cx: 14.5, cy: 13.5, r: 0.9, fill: 'currentColor' }))
     }
 
     function AllInboxIcon(props = {}) {
       return h('svg', svgProps(props, 20, '0 0 20 20'),
-        h('path', { d: 'M4.3 4.2h11.4l1.8 6.8v4.2a1.6 1.6 0 0 1-1.6 1.6H4.1a1.6 1.6 0 0 1-1.6-1.6V11l1.8-6.8Z', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinejoin: 'round' }),
-        h('path', { d: 'M2.6 11h4.3a3.1 3.1 0 0 0 6.2 0h4.3', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinejoin: 'round' }))
+        h('path', { d: 'M4.5 4.2h11l2 6.8H2.5l2-6.8Z', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinejoin: 'round' }),
+        h('path', { d: 'M2.5 11h4.3a3.2 3.2 0 0 0 6.4 0h4.3v4.2a1.6 1.6 0 0 1-1.6 1.6H4.1a1.6 1.6 0 0 1-1.6-1.6V11Z', fill: 'currentColor', stroke: 'currentColor', strokeWidth: 1.6, strokeLinejoin: 'round' }))
     }
 
     function FlagIcon(props = {}) {
@@ -405,8 +407,12 @@ window.__ModuleLoader__.load({
 
     function UrgentAlarmIcon(props = {}) {
       return h('svg', svgProps(props, 20, '0 0 20 20'),
-        h('circle', { cx: 10, cy: 11, r: 5.8, fill: 'none', stroke: 'currentColor', strokeWidth: 1.6 }),
-        h('path', { d: 'M10 8v3.2l2.1 1.3M3.2 5.4l2.4-2.1M16.8 5.4l-2.4-2.1M5.6 16.2l-1.2 1.5M14.4 16.2l1.2 1.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round' }))
+        h('path', {
+          d: 'M10 5.2a5.8 5.8 0 1 0 0 11.6a5.8 5.8 0 1 0 0-11.6ZM9.3 7.6a.7.7 0 0 1 1.4 0v2.7h2.1a.7.7 0 0 1 0 1.4H10a.7.7 0 0 1-.7-.7V7.6Z',
+          fill: 'currentColor',
+          fillRule: 'evenodd',
+        }),
+        h('path', { d: 'M3.4 6.2c.6-1.5 1.8-2.6 3.3-3.1M16.6 6.2c-.6-1.5-1.8-2.6-3.3-3.1M5.8 16l-1.2 1.6M14.2 16l1.2 1.6', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }))
     }
 
     function CompletedCheckIcon(props = {}) {
@@ -742,6 +748,15 @@ window.__ModuleLoader__.load({
   --ar-trash-badge: #161618;
   --ar-popover-bg: #2C2C2F;
   --ar-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  --ar-card-ring: rgba(255, 255, 255, 0.34);
+  --ar-qpill-blue-bg: rgba(29, 155, 240, 0.16);
+  --ar-qpill-blue-border: rgba(29, 155, 240, 0.32);
+  --ar-tile-today: radial-gradient(125% 115% at 62% 24%, #6D9AC7 0%, #557FA9 58%, #4B739B 100%);
+  --ar-tile-planned: radial-gradient(125% 115% at 62% 24%, #C17672 0%, #A85F5B 58%, #9A5552 100%);
+  --ar-tile-all: radial-gradient(125% 115% at 62% 24%, #5A5B5F 0%, #404145 58%, #36373B 100%);
+  --ar-tile-flagged: radial-gradient(125% 115% at 62% 24%, #C1956B 0%, #A87E57 58%, #9A724D 100%);
+  --ar-tile-urgent: radial-gradient(125% 115% at 62% 24%, #BC7086 0%, #A3596E 58%, #955064 100%);
+  --ar-tile-completed: radial-gradient(125% 115% at 62% 24%, #888B91 0%, #71747A 58%, #676A70 100%);
   --ar-ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --ar-ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ar-ease-snappy: cubic-bezier(0.2, 0, 0, 1);
@@ -769,10 +784,10 @@ window.__ModuleLoader__.load({
   font-family: inherit;
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]):not(.dark) .ar-root {
-    --ar-sidebar-bg: #F2F2F7;
+  :root:not([data-theme="dark"]):not(.dark) .ar-root:not([data-ar-theme="dark"]) {
+    --ar-sidebar-bg: #F6F5F4;
     --ar-main-bg: #FFFFFF;
-    --ar-surface: #E5E5EA;
+    --ar-surface: #EAEAEF;
     --ar-surface-hover: rgba(0, 0, 0, 0.045);
     --ar-surface-active: rgba(0, 0, 0, 0.085);
     --ar-pill-bg: #EFEFF4;
@@ -790,12 +805,32 @@ window.__ModuleLoader__.load({
     --ar-trash-badge: #D1D1D6;
     --ar-popover-bg: #FFFFFF;
     --ar-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+    --ar-card-ring: rgba(0, 0, 0, 0.14);
+    --ar-qpill-blue-bg: rgba(0, 122, 255, 0.12);
+    --ar-qpill-blue-border: rgba(0, 122, 255, 0.28);
+    --ar-tile-today: radial-gradient(125% 115% at 62% 24%, #88C0FC 0%, #67AAF5 56%, #5B9EEB 100%);
+    --ar-tile-planned: radial-gradient(125% 115% at 62% 24%, #F79891 0%, #EE7B74 56%, #E66E68 100%);
+    --ar-tile-all: radial-gradient(125% 115% at 62% 24%, #7A7B7E 0%, #5C5D60 58%, #4F5053 100%);
+    --ar-tile-flagged: radial-gradient(125% 115% at 62% 24%, #FBBE8A 0%, #F1A86B 58%, #EAA061 100%);
+    --ar-tile-urgent: radial-gradient(125% 115% at 62% 24%, #F696AD 0%, #EC7793 58%, #E46A87 100%);
+    --ar-tile-completed: radial-gradient(125% 115% at 62% 24%, #A0A5AC 0%, #868C94 58%, #7B8189 100%);
+  }
+  :root:not([data-theme="dark"]):not(.dark) .ar-root:not([data-ar-theme="dark"]) .ar-smart-card--pinned {
+    background: #EEAB64;
+    background: radial-gradient(
+      125% 115% at 62% 24%,
+      color-mix(in srgb, var(--ar-pin-hex, #FF9500) 48%, #FFFFFF) 0%,
+      color-mix(in srgb, var(--ar-pin-hex, #FF9500) 62%, #F6F3EE) 58%,
+      color-mix(in srgb, var(--ar-pin-hex, #FF9500) 70%, #EDE9E2) 100%
+    );
   }
 }
-:root[data-theme="light"] .ar-root, .light .ar-root {
-  --ar-sidebar-bg: #F2F2F7;
+:root[data-theme="light"] .ar-root:not([data-ar-theme="dark"]),
+.light .ar-root:not([data-ar-theme="dark"]),
+.ar-root[data-ar-theme="light"] {
+  --ar-sidebar-bg: #F6F5F4;
   --ar-main-bg: #FFFFFF;
-  --ar-surface: #E5E5EA;
+  --ar-surface: #EAEAEF;
   --ar-surface-hover: rgba(0, 0, 0, 0.045);
   --ar-surface-active: rgba(0, 0, 0, 0.085);
   --ar-pill-bg: #EFEFF4;
@@ -813,6 +848,26 @@ window.__ModuleLoader__.load({
   --ar-trash-badge: #D1D1D6;
   --ar-popover-bg: #FFFFFF;
   --ar-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+  --ar-card-ring: rgba(0, 0, 0, 0.14);
+  --ar-qpill-blue-bg: rgba(0, 122, 255, 0.12);
+  --ar-qpill-blue-border: rgba(0, 122, 255, 0.28);
+  --ar-tile-today: radial-gradient(125% 115% at 62% 24%, #88C0FC 0%, #67AAF5 56%, #5B9EEB 100%);
+  --ar-tile-planned: radial-gradient(125% 115% at 62% 24%, #F79891 0%, #EE7B74 56%, #E66E68 100%);
+  --ar-tile-all: radial-gradient(125% 115% at 62% 24%, #7A7B7E 0%, #5C5D60 58%, #4F5053 100%);
+  --ar-tile-flagged: radial-gradient(125% 115% at 62% 24%, #FBBE8A 0%, #F1A86B 58%, #EAA061 100%);
+  --ar-tile-urgent: radial-gradient(125% 115% at 62% 24%, #F696AD 0%, #EC7793 58%, #E46A87 100%);
+  --ar-tile-completed: radial-gradient(125% 115% at 62% 24%, #A0A5AC 0%, #868C94 58%, #7B8189 100%);
+}
+:root[data-theme="light"] .ar-root:not([data-ar-theme="dark"]) .ar-smart-card--pinned,
+.light .ar-root:not([data-ar-theme="dark"]) .ar-smart-card--pinned,
+.ar-root[data-ar-theme="light"] .ar-smart-card--pinned {
+  background: #EEAB64;
+  background: radial-gradient(
+    125% 115% at 62% 24%,
+    color-mix(in srgb, var(--ar-pin-hex, #FF9500) 48%, #FFFFFF) 0%,
+    color-mix(in srgb, var(--ar-pin-hex, #FF9500) 62%, #F6F3EE) 58%,
+    color-mix(in srgb, var(--ar-pin-hex, #FF9500) 70%, #EDE9E2) 100%
+  );
 }
 @keyframes arCheckPop {
   0% { transform: scale(0.78); }
@@ -1006,17 +1061,18 @@ window.__ModuleLoader__.load({
 .ar-smart-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 10px;
+  padding: 2px;
 }
 .ar-smart-card {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  height: 62px;
-  padding: 8px 10px;
+  height: 64px;
+  padding: 9px 12px;
   border: 0;
-  border-radius: 11px;
+  border-radius: 13px;
   color: #FFFFFF;
   font: inherit;
   text-align: left;
@@ -1027,6 +1083,21 @@ window.__ModuleLoader__.load({
     filter 160ms ease,
     box-shadow 180ms ease;
 }
+.ar-smart-card--today { background: var(--ar-tile-today); }
+.ar-smart-card--planned { background: var(--ar-tile-planned); }
+.ar-smart-card--all { background: var(--ar-tile-all); }
+.ar-smart-card--flagged { background: var(--ar-tile-flagged); }
+.ar-smart-card--urgent { background: var(--ar-tile-urgent); }
+.ar-smart-card--completed { background: var(--ar-tile-completed); }
+.ar-smart-card--pinned {
+  background: #9C7C54;
+  background: radial-gradient(
+    125% 115% at 62% 24%,
+    color-mix(in srgb, var(--ar-pin-hex, #FF9F0A) 46%, #74747A) 0%,
+    color-mix(in srgb, var(--ar-pin-hex, #FF9F0A) 44%, #4A4A50) 58%,
+    color-mix(in srgb, var(--ar-pin-hex, #FF9F0A) 42%, #3A3A3F) 100%
+  );
+}
 .ar-smart-card:hover {
   filter: brightness(1.06);
   transform: translateY(-1px);
@@ -1036,8 +1107,7 @@ window.__ModuleLoader__.load({
   transform: scale(0.96);
 }
 .ar-smart-card--on {
-  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.55), 0 4px 12px rgba(0, 0, 0, 0.24);
-  filter: brightness(1.09);
+  box-shadow: 0 0 0 2px var(--ar-sidebar-bg), 0 0 0 3.5px var(--ar-card-ring), 0 4px 10px rgba(0, 0, 0, 0.08);
 }
 .ar-smart-top {
   display: flex;
@@ -1933,8 +2003,8 @@ window.__ModuleLoader__.load({
 }
 .ar-qpill--blue {
   color: var(--ar-blue);
-  border-color: rgba(29, 155, 240, 0.32);
-  background: rgba(29, 155, 240, 0.09);
+  border-color: var(--ar-qpill-blue-border);
+  background: var(--ar-qpill-blue-bg);
 }
 .ar-qpill--pink {
   color: var(--ar-pink);
@@ -2196,6 +2266,59 @@ window.__ModuleLoader__.load({
         })
         ro.observe(rootRef.current)
         return () => ro.disconnect()
+      }, [])
+
+      React.useEffect(() => {
+        if (typeof document === 'undefined' || typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return undefined
+        const parseLuminance = (colorStr) => {
+          if (!colorStr || colorStr === 'transparent') return null
+          const s = String(colorStr).trim()
+          const hex = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
+          if (hex) {
+            const h = hex[1]
+            const r = parseInt(h.length === 3 ? h[0] + h[0] : h.slice(0, 2), 16)
+            const g = parseInt(h.length === 3 ? h[1] + h[1] : h.slice(2, 4), 16)
+            const b = parseInt(h.length === 3 ? h[2] + h[2] : h.slice(4, 6), 16)
+            return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+          }
+          const m = s.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,/\s]+([\d.]+%?))?/)
+          if (!m) return null
+          if (m[4] !== undefined && parseFloat(m[4]) === 0) return null
+          return (0.2126 * Number(m[1]) + 0.7152 * Number(m[2]) + 0.0722 * Number(m[3])) / 255
+        }
+        const syncHostTheme = () => {
+          const rootEl = rootRef.current
+          if (!rootEl || typeof rootEl.setAttribute !== 'function') return
+          let lum = null
+          if (document.documentElement) {
+            const token = window.getComputedStyle(document.documentElement).getPropertyValue('--dsw-alias-bg-base')
+            lum = parseLuminance(token)
+          }
+          if (lum === null) {
+            const candidates = [rootEl.parentElement, document.body, document.documentElement]
+            for (const el of candidates) {
+              if (!el) continue
+              lum = parseLuminance(window.getComputedStyle(el).backgroundColor)
+              if (lum !== null) break
+            }
+          }
+          if (lum === null) return
+          rootEl.setAttribute('data-ar-theme', lum > 0.5 ? 'light' : 'dark')
+        }
+        syncHostTheme()
+        let observer = null
+        if (typeof MutationObserver === 'function') {
+          observer = new MutationObserver(syncHostTheme)
+          const opts = { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] }
+          if (document.documentElement) observer.observe(document.documentElement, opts)
+          if (document.body) observer.observe(document.body, opts)
+        }
+        const mq = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: light)') : null
+        if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', syncHostTheme)
+        return () => {
+          if (observer) observer.disconnect()
+          if (mq && typeof mq.removeEventListener === 'function') mq.removeEventListener('change', syncHostTheme)
+        }
       }, [])
 
       React.useEffect(() => {
@@ -3397,12 +3520,12 @@ window.__ModuleLoader__.load({
       // =====================================================================
 
       const smartCards = [
-        { id: 'today', label: t('view.today'), count: dueTodayOrOverdue.length, showCount: true, bg: TILE_COLORS.today.tintDark, icon: () => h(TodayCalendarIcon, { day: new Date().getDate() }) },
-        { id: 'planned', label: t('view.planned'), count: scheduledOpen.length, showCount: true, bg: TILE_COLORS.planned.tintDark, icon: () => h(ScheduledIcon) },
-        { id: 'all', label: t('view.all'), count: openItems.length, showCount: true, bg: TILE_COLORS.all.tintDark, icon: () => h(AllInboxIcon) },
-        { id: 'flagged', label: t('view.flagged'), count: flaggedOpen.length, showCount: true, bg: TILE_COLORS.flagged.tintDark, icon: () => h(FlagIcon, { filled: true, size: 18 }) },
-        { id: 'urgent', label: t('view.urgent'), count: urgentOpen.length, showCount: true, bg: TILE_COLORS.urgent.tintDark, icon: () => h(UrgentAlarmIcon) },
-        { id: 'completed', label: t('view.completed'), count: doneItems.length, showCount: false, bg: TILE_COLORS.completed.tintDark, icon: () => h(CompletedCheckIcon) },
+        { id: 'today', label: t('view.today'), count: dueTodayOrOverdue.length, showCount: true, icon: () => h(TodayCalendarIcon, { day: new Date().getDate() }) },
+        { id: 'planned', label: t('view.planned'), count: scheduledOpen.length, showCount: true, icon: () => h(ScheduledIcon) },
+        { id: 'all', label: t('view.all'), count: openItems.length, showCount: true, icon: () => h(AllInboxIcon) },
+        { id: 'flagged', label: t('view.flagged'), count: flaggedOpen.length, showCount: true, icon: () => h(FlagIcon, { filled: true, size: 18 }) },
+        { id: 'urgent', label: t('view.urgent'), count: urgentOpen.length, showCount: true, icon: () => h(UrgentAlarmIcon) },
+        { id: 'completed', label: t('view.completed'), count: doneItems.length, showCount: false, icon: () => h(CompletedCheckIcon) },
       ]
 
       const renderSidebar = () => h('aside', {
@@ -3436,8 +3559,11 @@ window.__ModuleLoader__.load({
           smartCards.map((card) => h('button', {
             key: card.id,
             type: 'button',
-            className: view === card.id ? 'ar-smart-card ar-smart-card--on' : 'ar-smart-card',
-            style: { background: card.bg },
+            className: [
+              'ar-smart-card',
+              `ar-smart-card--${card.id}`,
+              view === card.id ? 'ar-smart-card--on' : '',
+            ].filter(Boolean).join(' '),
             'aria-pressed': view === card.id,
             onClick: () => selectView(card.id),
           },
@@ -3448,15 +3574,17 @@ window.__ModuleLoader__.load({
 
           pinnedListNames.map((name) => {
             const hex = colourOf(name)
-            const matchedColor = LIST_COLORS.find((c) => c.hex.toLowerCase() === hex.toLowerCase())
-            const cardBg = matchedColor ? matchedColor.cardDark : TILE_COLORS.pinned.tintDark
             const ic = iconOf(name)
             const targetView = `list:${name}`
             return h('button', {
               key: `pin:${name}`,
               type: 'button',
-              className: view === targetView ? 'ar-smart-card ar-smart-card--on' : 'ar-smart-card',
-              style: { background: cardBg },
+              className: [
+                'ar-smart-card',
+                'ar-smart-card--pinned',
+                view === targetView ? 'ar-smart-card--on' : '',
+              ].filter(Boolean).join(' '),
+              style: { '--ar-pin-hex': hex },
               'aria-pressed': view === targetView,
               onClick: () => selectView(targetView),
             },
@@ -3613,20 +3741,20 @@ window.__ModuleLoader__.load({
         if (search.trim() !== '') {
           return { title: t('search.results', { query: search.trim() }), color: 'var(--ar-text-primary)' }
         }
-        if (view === 'today') return { title: t('view.today'), color: TILE_COLORS.today.active }
-        if (view === 'planned') return { title: t('view.planned'), color: TILE_COLORS.planned.active }
+        if (view === 'today') return { title: t('view.today'), color: 'var(--ar-blue)' }
+        if (view === 'planned') return { title: t('view.planned'), color: 'var(--ar-red)' }
         if (view === 'all') return { title: t('view.all'), color: 'var(--ar-text-primary)' }
-        if (view === 'flagged') return { title: t('view.flagged'), color: TILE_COLORS.flagged.active }
-        if (view === 'urgent') return { title: t('view.urgent'), color: TILE_COLORS.urgent.active }
-        if (view === 'completed') return { title: t('view.completed'), color: TILE_COLORS.completed.active }
-        if (view === 'trash') return { title: t('view.trash'), color: TILE_COLORS.completed.active }
-        if (view === 'tags') return { title: t('sidebar.allTags'), color: TILE_COLORS.today.active }
-        if (view.startsWith('tag:')) return { title: `#${view.slice(4)}`, color: TILE_COLORS.today.active }
+        if (view === 'flagged') return { title: t('view.flagged'), color: 'var(--ar-orange)' }
+        if (view === 'urgent') return { title: t('view.urgent'), color: 'var(--ar-pink)' }
+        if (view === 'completed') return { title: t('view.completed'), color: 'var(--ar-text-secondary)' }
+        if (view === 'trash') return { title: t('view.trash'), color: 'var(--ar-text-secondary)' }
+        if (view === 'tags') return { title: t('sidebar.allTags'), color: 'var(--ar-blue)' }
+        if (view.startsWith('tag:')) return { title: `#${view.slice(4)}`, color: 'var(--ar-blue)' }
         if (view.startsWith('list:')) {
           const ln = view.slice(5)
           return { title: ln, color: colourOf(ln) }
         }
-        return { title: t('view.today'), color: TILE_COLORS.today.active }
+        return { title: t('view.today'), color: 'var(--ar-blue)' }
       }
 
       const renderSectionList = (secKey, label, secItems, draftMatch, onAddClick, opts = {}) => {
